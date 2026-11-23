@@ -156,6 +156,7 @@ Identifier prefixes:
 | PF-2 | mudcat shall index at least 10^11 (TBR) elements in one zone through manifests. | Web corpora and packed multimodal datasets reach this scale. | A |
 | PF-3 | mudcat shall register at least TBD versions per minute through bulk registration. | The Butler measured registration delays of up to ten minutes with hundreds of concurrent writers. | T |
 | PF-4 | mudcat shall return the first page of a metadata query over 10^8 (TBR) versions in less than TBD seconds. | Interactive search must stay usable at science scale. | T |
+| PF-5 | mudcat shall commit a change to a dataset in less than TBD milliseconds, with TBD concurrent writers on the same branch. | Iceberg commits take seconds because they write metadata files to object storage; mudcat commits only change database rows. | T |
 
 ## Queries the system must answer
 

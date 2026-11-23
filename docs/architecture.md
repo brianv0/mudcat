@@ -28,41 +28,96 @@ No class of state may exist only in a derived index. DataHub keeps time-series a
 
 ## Components
 
-```
-   Clients: Python SDK · CLI · web UI · data loaders · notebooks · agents (MCP)
-                                   │
-          ┌────────────────────────┼─────────────────────────────────────┐
-          │                  API gateway (OIDC, tokens)                  │
-          │                                                              │
-          │  Catalog API ─ Query compiler ─ Resolver ─ Policy engine     │
-          │       │                              │           │           │
-          │  Ingest writer (batched)             │     Pinning service   │
-          │       │                              │           │           │
-          │  ┌────▼──────────────────────────────▼───────────▼────────┐  │
-          │  │                 PostgreSQL catalog                     │  │
-          │  │      entities · relations · ACLs · policies · outbox   │  │
-          │  └────┬───────────────────────────────────────────────────┘  │
-          │       │ change log (CloudEvents)                             │
-          │  ┌────▼──────────┬───────────────┬────────────┬───────────┐  │
-          │  │ Index builders│ Lineage       │ Placement  │ Deletion  │  │
-          │  │ search, vector│ ingest        │ reconciler │ workflow  │  │
-          │  │ identity      │ (OpenLineage, │            │           │  │
-          │  │               │ MLflow, …)    │            │           │  │
-          │  └───────────────┴───────────────┴─────┬──────┴─────┬─────┘  │
-          │                                        │            │        │
-          │  Gateways: Iceberg REST · DCAT/Croissant/RO-Crate export ·   │
-          │            MCP server · fsspec · federation feed ·           │
-          │            field gateways (fields.md)                        │
-          └────────────────────────────────────────┼────────────┼────────┘
-                                                   │ tasks      │
-                     ┌─────────────────────────────▼────────────▼─────────┐
-                     │ Site agents (one or more per storage resource)     │
-                     │ extract · fingerprint · verify · inventory ·       │
-                     │ delete with receipts · invoke movers               │
-                     └───────────────┬────────────────────────────────────┘
-                                     │
-                 Buckets · HPC file systems · tape · enclaves
-                 Movers: FTS3 · Globus · rclone · cloud replication · Pelican
+```d2
+direction: down
+
+clients: Clients {
+  sdk: Python SDK
+  cli: CLI
+  ui: Web UI
+  loaders: Data loaders
+  notebooks: Notebooks
+  agents: Agents (MCP)
+}
+
+zone: mudcat zone {
+  gateway: "API gateway\n(OIDC, tokens)"
+
+  services: Services {
+    api: Catalog API
+    query: Query compiler
+    resolver: Resolver
+    policy: Policy engine
+    pinning: Pinning service
+    authz: Authorization port
+    ingest: "Ingest writer\n(batched)"
+  }
+
+  db: "PostgreSQL catalog\nentities · relations · ACLs · policies · outbox" {
+    shape: cylinder
+  }
+
+  consumers: Change-log consumers {
+    index: "Index builders\nsearch · vector · identity"
+    lineage: "Lineage ingest\nOpenLineage · MLflow · …"
+    placement: Placement reconciler
+    deletion: Deletion workflow
+  }
+
+  gateways: Gateways {
+    iceberg: Iceberg REST
+    export: "Export\nDCAT · Croissant · RO-Crate"
+    mcp: MCP server
+    fsspec: fsspec
+    federation: Federation feed
+    field: "Field gateways\n(fields.md)"
+  }
+
+  gateway -> services.api
+  gateways -> services.api
+  services.api -> services.query
+  services.api -> services.resolver
+  services.api -> services.ingest
+  services.resolver -> services.policy
+  services.policy -> services.pinning
+  services.policy -> services.authz
+  services.query -> db
+  services.resolver -> db
+  services.pinning -> db
+  services.ingest -> db
+  db -> consumers: change log (CloudEvents)
+}
+
+authz_service: "External authorization service\nSpiceDB · OpenFGA (optional)" {
+  style.stroke-dash: 3
+}
+
+site_agents: "Site agents (one or more per storage resource)\nextract · fingerprint · verify · inventory\ndelete with receipts · invoke movers"
+
+movers: Movers {
+  fts: FTS3
+  globus: Globus
+  rclone: rclone
+  cloud: Cloud replication
+  pelican: Pelican
+}
+
+storage: Storage {
+  buckets: Buckets
+  hpc: HPC file systems
+  tape: Tape
+  enclaves: Enclaves
+}
+
+clients -> zone.gateway
+zone.services.authz -> authz_service: optional
+zone.consumers.placement -> site_agents: tasks
+zone.consumers.deletion -> site_agents: tasks
+site_agents -> zone.services.ingest: results
+site_agents -> storage
+site_agents -> movers
+movers -> storage
+clients.loaders -> storage: direct reads with issued credentials
 ```
 
 ### Catalog API
@@ -72,7 +127,19 @@ The catalog API is a stateless service with these interfaces:
 - **REST interface:** it has an OpenAPI description and uses JSON by default. Content negotiation gives JSON-LD with the published context. Paging uses cursors with a stable default order, and counts are estimates. To count results, Datacat's REST layer iterated over the full result set. pgstac documents the same failure mode.
 - **Bulk interface** for registration, manifest submission and resolution: Apache Arrow over HTTP or Arrow Flight. It handles millions of rows per call.
 - **Event stream** of catalog changes, for consumers that need it.
-- **Conditional commits.** A request that changes a dataset follows the commit shape of the Iceberg REST catalog. The request has a list of conditions and a list of changes. For example, the condition "branch `main` points to snapshot S" goes with the change "add these members". mudcat applies the changes in one transaction only if all the conditions are true. If not, it returns a conflict, and the client tries again. One request can change several datasets, in one transaction.
+- **Commits with requirements.** A request that changes a dataset has the shape of an Iceberg REST commit. It has a list of **requirements** and a list of **updates**. Iceberg calls a requirement such as `assert-ref-snapshot-id` an assertion about the current table state. In mudcat, a requirement such as "branch `main` points to snapshot S" goes with an update such as "add these members". mudcat applies all the updates in one transaction, but only if all the requirements are true. If not, it returns a conflict, and the client tries again. One request can change several datasets, in one transaction. This is optimistic concurrency.
+
+### Commit cost
+
+Iceberg commits are slow, usually seconds. Each commit writes new manifests, a new manifest list and a new metadata file to object storage before it swaps the pointer in the catalog. When two writers conflict, the loser writes these files again. Many small commits also make many small files and snapshots, which later need compaction and expiry. A REST catalog helps, because the server applies the updates, but the file writes stay.
+
+mudcat keeps object-storage writes out of the commit path:
+
+- **A commit is a database transaction.** It changes rows in the catalog database only. It writes no files.
+- **Recent changes stay as rows.** The members that recent commits added or removed stay as rows in the catalog database. A background compactor later writes them into manifest files. A snapshot is thus a list of sealed manifests plus the rows that the compactor did not seal yet.
+- **The Merkle hash is computed at publication,** not at each commit. A published snapshot always has its hash (ID-5).
+- **Appends do not conflict.** Some updates only add members, and their requirement only names the branch. mudcat applies such an update to the newest snapshot of the branch, and the client does not retry. Iceberg treats appends in a similar way when a client retries. Updates that remove or replace members keep their strict requirements.
+- **Batched snapshots.** The ingest writer groups the registrations for one dataset into one commit for each batch interval. Thus a high rate of registration does not make one snapshot for each file.
 
 ### Query compiler
 

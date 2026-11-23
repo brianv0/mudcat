@@ -45,29 +45,33 @@ This reverses two earlier designs. Datacat used the name plus the parent folder 
 
 ### Immutability
 
-Versions, snapshots, pinned specifications, policy decisions and provenance records are immutable after the catalog publishes them. Only aliases, tags, lifecycle status, replica state and access-control lists are mutable.
+Versions, snapshots, pinned specifications, policy decisions and provenance records are immutable after the catalog publishes them. Only aliases, refs (branches and tags), lifecycle status, replica state, grants and access-control lists are mutable.
 
 ## Entity overview
 
-```
-                      Zone
-                        │
-                   Collection ──── contains ───┐
-                        │                      │
-                    DataObject ◄─ specializationOf ─ Version ── structure ──► StructureDescriptor
-                                                   │   │                         (records│array│stream│…)
-                                         replicaOf │   │ hasSource
-                                                   ▼   ▼
-             StorageResource ◄── storedOn ── Replica   Source ── terms ───► odrl:Policy
-                                                   ▲
-                      Dataset ── hasVersion ──► Snapshot ── hasMember ──► Version / AnnotationSet
-                                                   │
-                                 Representation ◄──┘ (materialised forms, each with replicas)
+```d2
+direction: down
 
-  Specification (prov:Plan) ── pinned as ──► PinnedSpecification ── materialised as ──► Representation
-                                                   │ used (role: training)
-                                                   ▼
-                                               Training run ── generated ──► Model ── used by ──► Evaluation ──► EvaluationResult
+Zone -> Collection: mints
+Collection -> Collection: contains
+Collection -> DataObject: contains
+Version -> DataObject: specializationOf
+Version -> StructureDescriptor: structure
+Version -> Source: hasSource
+Source -> "odrl:Policy": terms
+Replica -> Version: replicaOf
+Replica -> StorageResource: storedOn
+Dataset -> Snapshot: hasVersion
+Ref -> Snapshot: points to
+Snapshot -> Version: hadMember
+Snapshot -> AnnotationSet: hadMember
+Representation -> Snapshot: materializedFrom
+Specification -> PinnedSpecification: pinned as
+PinnedSpecification -> Representation: materialised as
+"Training run" -> PinnedSpecification: used (role training)
+Model -> "Training run": wasGeneratedBy
+Evaluation -> Model: used
+EvaluationResult -> Evaluation: wasGeneratedBy
 ```
 
 ## 1. Namespace and storage
@@ -243,7 +247,7 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
 - A **branch** moves when a writer commits a new snapshot to it, for example `main` or `curation`.
 - A **tag** does not move after mudcat creates it, for example `release-2026-11`.
 - **Publication** is a tag on a snapshot, and gives the snapshot the `published` status. This replaces a mutable "working" snapshot: work happens on a branch of immutable snapshots, and publication marks one of them. This is the write-audit-publish pattern of Iceberg users.
-- **Conditional updates.** A writer moves a branch only with a condition on the snapshot that the branch points to now. If another writer moved the branch first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits.
+- **Commit requirements.** A writer moves a branch only with a requirement on the snapshot that the branch points to now. Iceberg calls such conditions requirements, for example `assert-ref-snapshot-id`. If another writer moved the branch first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits. Updates that only add members are an exception: mudcat applies them to the newest snapshot without a retry (see the commit cost section of [architecture.md](architecture.md)).
 - mudcat records the history of each branch, so a view can resolve a branch "as of" a time.
 
 **Snapshots and collections.** Snapshots belong to datasets, not to collections. This follows Iceberg, where each table has its own snapshots and a namespace has none. mudcat gives three things for collections instead:
