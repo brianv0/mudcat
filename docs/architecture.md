@@ -294,6 +294,91 @@ A takedown, licence expiry or retention deadline starts a workflow:
 - **Storage** that requires X.509 or WLCG and SciTokens profiles is reached through credentials the resolver issues. The WLCG move from X.509 to tokens has slipped to 2028, so both are needed.
 - **Audit:** every catalog write, credential issue and export is written to an append-only audit table.
 
+## Federate, delegate or replicate
+
+Every piece of state needs one of three answers to the question of where it lives:
+
+- **Replicate:** one authority owns the state and keeps copies of it elsewhere, for locality or availability.
+- **Delegate:** another system is the authority for a function, and mudcat accepts its answers.
+- **Federate:** several authorities each own their own state, and exchange descriptions under an agreement.
+
+Two tests decide most cases:
+
+1. **Who can say no?** If one authority controls the state, replicate it (within that authority) or delegate it (to a specialist system that authority runs or contracts). If several independent authorities each control part of it, federate.
+2. **Is it immutable?** Immutable things (versions, published snapshots, pinned specifications, provenance records) can be copied anywhere without coordination. Mutable authoritative state (ACLs, grants, replica state, lifecycle status) has exactly one writer. It is never replicated with multiple writers.
+
+### Replicate
+
+Replication happens within one authority, which normally means one zone:
+
+- **Bytes:** replicas of versions on several storage resources, placed by replication rules, to put data near compute.
+- **Catalog reads:** PostgreSQL read replicas in other regions, with writes going to the primary.
+- **Derived indexes:** search, vector and identity indexes, rebuilt from the change log wherever they are needed.
+- **Structural relationships:** copied into an external authorization service, with the catalog remaining their owner.
+
+The Butler team's draft diagnosis is that Rubin ran independent Butlers per site, bridged by Rucio and Kafka, for what is one organisation's data. That is federation used where replication within one authority was the right answer.
+
+Rucio's model, one catalog with many sites, is the pattern to follow inside an authority.
+
+### Delegate
+
+mudcat delegates to another system when that system is the authority by nature, or does the job better. A delegation needs three things:
+
+- a defined contract;
+- a failure mode, which is fail closed for security functions;
+- a way to verify the answer afterwards, such as reconciliation or audit.
+
+| Function | Delegated to | How mudcat verifies |
+|---|---|---|
+| Identity and group membership | OIDC identity provider; SCIM for groups | Token validation; membership snapshots in the audit log |
+| Access checks | The authorization port: built-in, SpiceDB, OpenFGA | Conformance suite; relationship reconciliation |
+| Moving bytes | FTS3, Globus, rclone, Pelican, provider replication | Site agents verify checksums and update completeness |
+| Replication inside a cloud | Provider replication and lifecycle rules | Inventory reconciliation |
+| Checksums | Storage-provided checksums where they exist | Periodic re-verification on a policy schedule |
+| Internal file lists of tables | Iceberg, Delta, Lance and Icechunk metadata | The catalog pins a table snapshot identifier; it does not copy the file list |
+| Query execution over manifests | DuckDB, DataFusion, Trino | Results are traceable to pinned manifests |
+| Run tracking | MLflow, Weights & Biases, workflow engines | Lineage ingest matches identifiers through aliases |
+| Training inside an enclave, or federated learning at a partner | The enclave or partner | The activity is recorded with its location and inputs; obligations attach to the resulting model |
+
+mudcat never delegates usage-policy decisions: the evaluation at pinning, and the propagation of duties. These are the system's purpose. They depend on lineage that only the catalog holds.
+
+### Federate
+
+Federation is used where several authorities will not, or may not, cede control:
+
+- separate organisations;
+- legal jurisdictions;
+- enclaves;
+- commercial partners;
+- national facilities in a collaboration.
+
+Each authority runs its own zone with its own namespace, identifiers, access control and policy.
+
+Between zones:
+
+- **Immutable descriptions are exchanged,** never mutable state: published snapshot descriptions, lineage summaries, completeness records and tombstones, over the signed federation feed. A zone may harvest other zones' published descriptions into its own search index, much as DCAT harvesting does. This copies descriptions, not authority.
+- **References cross zones by IRI.** A pinned specification in zone A can name a snapshot in zone B. Resolving it asks zone B, which applies its own access and usage policy.
+- **Identity federates; authorization does not.** Zone B can accept zone A's users through OIDC federation, but the zone that owns the data makes every decision about it.
+- **Agreements are explicit.** Data or descriptions flow only under an agreement between zones, recorded as an ODRL offer and acceptance.
+  - A zone that accepts copies of data under an agreement takes on the obligations attached to them.
+  - Tombstones are honoured automatically for copies received under agreements that require it.
+  - Other tombstones are queued for review.
+- **Data may never move at all.** An enclave zone may publish descriptions and lineage while forbidding any replica outside it. Models trained inside it are registered in it, with its obligations attached.
+
+### Decision table
+
+| State | Within one authority | Across authorities |
+|---|---|---|
+| Bytes | Replicate, by replication rules | Copies only under an agreement, which carries obligations; enclave data never leaves |
+| Catalog records | Single primary with read replicas | Federate; exchange published, immutable descriptions |
+| Search and identity indexes | Derived and replicated freely | Each zone builds its own; it may include harvested descriptions |
+| Provenance | Single primary; run records as catalogued files | Exchange summaries; detail stays with the owning zone |
+| Identity | Delegate to the identity provider | Federate through OIDC |
+| Access control | Delegate checks to the authorization port; the catalog owns structural relationships | Never shared; the owning zone decides |
+| Usage policy and duties | Evaluated by mudcat | Duties travel with copies under the agreement |
+| Tombstones and holds | Deletion workflow | Propagated over the federation feed; honoured according to the agreement |
+| Transfers | Delegate to movers | Each side's movers, under the agreement |
+
 ## Main flows
 
 ### Register data in place
@@ -373,6 +458,6 @@ Each step is useful without the next. The first two together are already a bette
 - **Bulk wire format:** Arrow Flight, or Arrow IPC over plain HTTP. Flight is faster but harder to put behind ordinary gateways.
 - **Single-row writes:** whether they should also go through the ingest queue, for simpler consistency, at the cost of latency.
 - **Element-level policy:** how far it should go beyond exclusion lists.
-- **Federation trust:** how zones authenticate one another, and whether a received tombstone must be honoured automatically.
+- **Federation trust:** how zones authenticate one another, and what agreement terms are needed before received tombstones are honoured automatically.
 - **Authorization source of truth:** whether grants should be owned by the external service when one is configured, instead of by mudcat with a synchronised copy.
 - **Embedded mode:** whether an embedded SQLite mode is worth maintaining alongside PostgreSQL.
