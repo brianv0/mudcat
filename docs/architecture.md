@@ -150,7 +150,7 @@ There are five enforcement points: **registration**, **pinning**, **materialisat
 - **Usage policy.** mudcat always evaluates usage policy itself, in SQL, over the usage grants, constraints and duties attached to sources. The **effective-policy cache** holds the accumulated duties per snapshot, representation and model. It is a derived index, and mudcat recomputes it after each change.
 - **Pinning.** The pinning service:
   - resolves a specification to snapshots, and records the identifier and the Merkle hash of each;
-  - applies exclusion lists;
+  - applies the exclusion lists of each dataset and the zone-wide invalidation set;
   - checks that every source that contributes grants the requested action and purpose;
   - writes the pinned specification with its policy decision and, where the provider issues one, the authorization consistency token.
 
@@ -252,13 +252,16 @@ Where a cloud provider can enforce a rule natively, the reconciler configures an
 
 ### Deletion workflow
 
-A takedown, licence expiry or retention deadline starts a workflow:
+A takedown, licence expiry, retention deadline or erasure request starts a workflow. The operations are those of the model (model, section 5: removal, tombstones and holds):
 
-1. Check legal holds. A hold diverts the data that it matches to its retention compartment. It also stops deletion of that data.
-2. Enumerate occurrences through the content-identity index and lineage: derived representations, annotation sets, caches, replicas.
-3. Issue deletion tasks to site agents and collect a receipt per replica.
-4. Mark affected snapshots non-materialisable and create redacted successors. Keep the original snapshot hashes.
-5. Flag the models trained on affected data, with the number of affected elements. A person then makes a decision, and the workflow records it.
+1. Check legal holds. A hold diverts the data that it matches to its retention compartment. It also stops purge and erasure of that data.
+2. Add the tombstone to the zone-wide invalidation set. From this point, the resolver and the pinning service exclude the content from every snapshot, old or new.
+3. Enumerate occurrences through the content-identity index and lineage: derived representations, annotation sets, caches, replicas.
+4. If the request needs purge, issue deletion tasks to site agents, and collect a receipt per replica. Where the storage has native versioning, the site agent also removes old object versions, so that the bytes are really gone.
+5. If the request needs erasure, replace the catalog records with minimal tombstones.
+6. Make redacted successors of the affected snapshots where their owners want them. The original snapshots keep their hashes.
+7. Flag the models trained on affected data, with the number of affected elements. A person then makes a decision, and the workflow records it.
+8. Send the tombstone on the federation feed to the zones that hold copies.
 
 ### Gateways
 
@@ -426,7 +429,7 @@ Three mechanisms make this work without shared mutable state:
 ### Train a model
 
 1. A user submits a specification.
-2. The pinning service resolves it to snapshots, applies exclusion lists and evaluates usage policy. Then it writes the pinned specification with its policy decision.
+2. The pinning service resolves it to snapshots, applies exclusion lists and the invalidation set, and evaluates usage policy. Then it writes the pinned specification with its policy decision.
 3. A suitable representation may not exist on a storage resource near the target cluster. In that case, mudcat creates a materialisation and a replication rule. The reconciler completes them.
 4. The job gets a resolved manifest, credentials and a run token from the resolver. Then it reads storage directly.
 5. At the end, the job publishes checkpoints as model versions. The catalog records the training activity with `observed` and `declared` relations, and the full run record as a bundle.

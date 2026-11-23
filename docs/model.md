@@ -246,7 +246,7 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
 - **Conditional updates.** A writer moves a branch only with a condition on the snapshot that the branch points to now. If another writer moved the branch first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits.
 - mudcat records the history of each branch, so a view can resolve a branch "as of" a time.
 
-**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists (takedowns, opt-outs) are annotation sets.
+**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the zone-wide invalidation set instead (section 5).
 
 **Representation** (`mc:Representation`, analogous to `dcat:Distribution`). One physical form of a snapshot, such as native HDF5, analysis-ready Zarr, Parquet, WebDataset shards or tokenized shards.
 
@@ -390,11 +390,38 @@ mudcat keeps the terms themselves (what a licence or contract says) separate fro
 - **Export.** mudcat exports terms with published snapshots (`odrl:hasPolicy` in DCAT, and in Croissant and RO-Crate exports). The federation feed between zones also carries them.
 - **Negotiation.** A zone can publish an ODRL offer and record the accepted agreement before the zones exchange data.
 
-### Deletion and holds
+### Removal, tombstones and holds
 
-- **Tombstone** (`prov:wasInvalidatedBy` an `mc:Takedown` activity). It applies to an element, version, source or snapshot. It has the reason and the party that made the request.
-- **LegalHold** (`mc:LegalHold`). It overrides deletion for the entities in scope and moves them to a retention compartment. It records the reason.
-- **DeletionReceipt** (`mc:DeletionReceipt`). Per replica: the deleted content, the location, the time and the agent that deleted it.
+"Delete" can mean five different operations. They differ in two ways:
+
+- **Direction in time.** A forward operation changes only what comes after it, as an Iceberg delete file or an S3 delete marker does. A retroactive operation also changes what a reader can do with history.
+- **What remains.** Some operations keep the bytes, some keep only the catalog record, and some keep only a minimal tombstone.
+
+| Operation | Effect | Direction | Bytes | Catalog record |
+|---|---|---|---|---|
+| **Remove from a dataset** | A new snapshot without the member | Forward | Kept | Kept. Older snapshots still contain the member |
+| **Delete a data object** | A **delete marker**: a new version with no content becomes `latest` | Forward | Kept until the retention of the data object ends | Kept. Older versions still resolve |
+| **Invalidate** | A **tombstone** (`prov:wasInvalidatedBy` an `mc:Takedown` activity) on an element, version, source or snapshot, with the reason and the party that made the request | Retroactive | Kept until purge | Kept, with the tombstone |
+| **Purge** | Removal of the bytes of each replica, with a **deletion receipt** (`mc:DeletionReceipt`) per replica: the content, the location, the time and the agent | Retroactive | Removed | Kept. Replicas get the state `retired` |
+| **Erase** | Removal of the catalog record. Only a minimal tombstone stays: the identifier, the date, the reason and the stored content hash | Retroactive | Removed | Removed, except the minimal tombstone |
+
+The rules:
+
+- **Tombstones apply to all snapshots.** A tombstone does not create a new snapshot of each dataset that contains the content. mudcat keeps one zone-wide **invalidation set**. The resolver and the pinning service apply it to every snapshot, old or new. Thus a takedown takes effect at once, also for snapshots that a pinned specification already uses.
+- **Exclusion lists in a dataset are forward.** An exclusion list that is an annotation set of one dataset (for example the opt-outs of one source) is a forward operation. It affects only the snapshots that contain it. This is the equivalent of an Iceberg deletion vector.
+- **Snapshots keep their hashes.** A snapshot that contains invalidated, purged or erased content keeps its Merkle hash. The hash still proves what the snapshot contained. mudcat can make a redacted successor snapshot, for continued use of the rest of the content.
+- **Erasure is for data that must not stay in the catalog,** for example personal data in metadata. The minimal tombstone does not contain the erased metadata. Sometimes the content hash can itself identify a person. Then mudcat also removes the hash. As a result, nobody can verify that member of the snapshots that contained it.
+- **Legal holds** (`mc:LegalHold`) block purge and erasure for the entities in scope, and move them to a retention compartment, with the reason recorded. Where a storage resource has native retention locks, for example object lock on a bucket, mudcat applies the hold through them.
+- **Models** that used invalidated content get a flag with the number of affected elements. A person decides what to do, and mudcat records the decision.
+
+### Time travel
+
+A reader can resolve a dataset, a data object or an alias "as of" a time T. Four rules apply:
+
+1. **History, not past permissions.** As-of resolution gives the membership and metadata as of T. But mudcat applies the access control, usage policy and invalidation set of now. A reader cannot use time travel to get content that mudcat invalidated after T.
+2. **Audit is separate.** An auditor who must know what mudcat permitted at T reads the recorded decisions. These are the decision in each pinned specification, with its authorization consistency token, and the audit log. Time travel does not compute past decisions again.
+3. **Retention limits time travel.** mudcat keeps published snapshots, so time travel to them always works. Unpublished snapshots expire. As-of resolution to a time whose snapshot expired fails with an error that states the expiry. It does not silently resolve to another snapshot.
+4. **Mutable state has a history.** mudcat keeps the transaction-time history of refs, aliases, ACLs, grants, replica states and lifecycle status. Thus, for example, an old path in a script resolves to the data object that the path named at T. Some periods of validity are part of the data, for example the term of a licence or an embargo date. These are ordinary attributes, not a second time dimension.
 
 ## 6. Provenance
 

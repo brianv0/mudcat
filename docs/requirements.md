@@ -98,7 +98,13 @@ Identifier prefixes:
 | UP-5 | mudcat shall keep the original terms document of each source and link each compiled grant, constraint and duty to the clause it came from. | Audits and disputes must trace a decision to the contract. | I |
 | UP-6 | mudcat shall block the pinning of a purpose that depends on terms that the terms compiler could not translate, until a reviewer approves it. | Partial compilation must not grant more than the contract gives. | T |
 | UP-7 | When mudcat receives a takedown, mudcat shall find each occurrence of the affected content in the zone and record a deletion receipt for each replica that it deletes. | A deletion must be complete and provable. | T |
-| UP-8 | mudcat shall not delete data that a legal hold covers. | Preservation orders override deletion. | T |
+| UP-8 | mudcat shall not purge or erase data that a legal hold covers. | Preservation orders override deletion. | T |
+| UP-9 | mudcat shall exclude invalidated content from each resolution and each pinning, for snapshots made before and after the invalidation. | A takedown must take effect at once, also for training sets that exist. | T |
+| UP-10 | mudcat shall keep the Merkle hash of a snapshot after it purges content of that snapshot. | The hash proves what the snapshot contained. | T |
+| UP-11 | When mudcat erases an entity, mudcat shall keep only its identifier, the date, the reason and, unless the hash can identify a person, its content hash. | Erasure requests can cover metadata; the tombstone must not keep what the request removes. | T |
+| UP-12 | mudcat shall apply the access control, usage policy and invalidation set that are in effect now to each as-of resolution. | Time travel must not give back access that a takedown or revocation removed. | T |
+| UP-13 | mudcat shall keep the transaction-time history of refs, aliases, ACLs, grants, replica states and lifecycle status. | Old scripts and audits must resolve names and decisions as they were. | T |
+| UP-14 | mudcat shall return an error that states the expiry when an as-of resolution needs an expired snapshot. | A silent resolution to another snapshot would break reproducibility. | T |
 
 ## Data access and resolution
 
