@@ -269,6 +269,21 @@ Three rules keep the schema portable and the graph shallow:
 - **Tickets.** An iRODS-style ticket becomes a relationship whose condition limits it by expiry time or use count.
 - **Compartments.** A compartment is an intersection: membership of the compartment's group is required in addition to the ordinary grant. Compartments implement partner segregation and restricted evaluation sets.
 
+**Correspondence with Datacat.** Of the systems reviewed, Datacat's ACL model is the closest to this one, and it maps directly:
+
+- **Entries become relationships.** A Datacat entry such as `alice@astro:g:rw` on collection X becomes the relationships `collection:X#reader@group:astro/alice#member` and `collection:X#writer@group:astro/alice#member`.
+- **Group lookup.** The group-manager lookup becomes the `group#member` relation.
+- **Effective permissions.** The effective-permissions call becomes a check, or a lookup of subjects.
+
+One difference is deliberate:
+
+- **Datacat inherits by override.** A node with its own ACL replaces what it would have inherited, as in AFS.
+- **Zanzibar inherits by union.** Following a parent relation adds the parent's grants to the node's own.
+
+The `acl_root` relation preserves Datacat's override semantics. Additive grants can still be expressed explicitly where wanted.
+
+For contrast, iRODS copies a collection's ACL onto new objects at creation time, so later changes to the collection do not apply to existing objects. Rucio and the Butler grant permissions per account or per repository.
+
 **Ownership of relationships:**
 
 - **Catalog-owned.** Relationships that follow from catalog structure (parent collection, ACL root, dataset membership) are owned by mudcat and synchronised to any external service.
