@@ -24,7 +24,7 @@ An entity is a node of a `mc:` class. "Subclass of" means `rdfs:subClassOf`.
 
 ### Identity
 
-Every entity has an immutable identifier. The catalog publishes this identifier as an IRI. Names, paths and external identifiers are **aliases**. They are mutable, unique within their scheme, and point to an identifier.
+Every entity has an immutable identifier. The catalog publishes this identifier as an IRI. Names, paths and external identifiers are **aliases**. They are unique within their scheme, and point to an identifier. Most aliases are mutable. Content-hash aliases are the exception: they never change.
 
 For every entity, versions and snapshots included, this identifier is a time-ordered UUID (UUIDv7). The zone that minted the UUID qualifies it. That zone is the entity's authority. The embedded timestamp is not a privacy risk, because the access model controls who can see an identifier. Also, UUIDv7 keeps index locality for inserts in time order.
 
@@ -78,7 +78,7 @@ These concepts come from iRODS and Datacat. The placement concepts come from Ruc
 
 **Collection** (`mc:Collection`). A node in the logical namespace (iRODS collection; Datacat folder). It contains data objects and other collections. Its path is an alias. A collection can carry inherited defaults: access-control lists, metadata and provenance (for example, "instrument X produced everything under `/raw/campaign42`").
 
-**DataObject** (`mc:DataObject`, subclass of `prov:Entity`). A logical unit of content, independent of how many revisions or copies exist (iRODS data object; Datacat dataset; Rucio file DID). Pointers: `mc:latestVersion`, and named tags.
+**DataObject** (`mc:DataObject`, subclass of `prov:Entity`). A logical unit of content, independent of how many revisions or copies exist (iRODS data object; Datacat dataset; Rucio file DID). Its mutable pointers are refs (section 4), for example `latest`.
 
 **Version** (`mc:Version`, subclass of `prov:Entity`).
 
@@ -102,7 +102,7 @@ These concepts come from iRODS and Datacat. The placement concepts come from Ruc
 
 **View** (`mc:View`). A rule that resolves a logical name to one version and one replica. It is a general form of Datacat's (version, site) view.
 
-- Version selector: `latest`, a number, a tag or a snapshot.
+- Version selector: `latest`, a number, a ref, a snapshot, or a time ("as of T").
 - Location preference: a named resource, "nearest to compute location L", "cheapest verified" or "canonical".
 
 ## 2. Structure
@@ -132,6 +132,7 @@ Every field has:
 
 | Property | Term | Notes |
 |---|---|---|
+| Identifier | `mc:fieldId` | A UUIDv7. It does not change when the field gets a new name. Schema evolution and annotation sets refer to fields by this identifier, as Iceberg tables refer to columns by field ID |
 | Name | `csvw:name` | Unique within its parent |
 | Description | `dcterms:description` | |
 | Logical datatype | `csvw:datatype` | XSD-based, with CSVW's derived types and formats |
@@ -155,6 +156,23 @@ Element metadata uses foreign keys to declare its joins to **reference data** (s
 ### Schema profiles
 
 Community schema languages map onto fields and CSVW tables as import and export **profiles**, not as separate models. The field is the core concept, and CSVW gives the record structure. A profile carries extra annotations where it needs them. Croissant record sets are an example. The field guidelines list the profiles.
+
+Most schema languages have the same parts, and each profile maps them in the same way:
+
+| Part of a schema language | mudcat |
+|---|---|
+| Schema | `csvw:TableGroup` |
+| Table | `csvw:Table` |
+| Column | `csvw:Column` (a field) |
+| Datatype | `csvw:datatype`, plus `mc:physicalType` |
+| Nullable | The inverse of `csvw:required` |
+| Description | `dcterms:description` |
+| Semantic tag | `csvw:propertyUrl` |
+| Unit | `qudt:unit`. The original unit string stays in `mc:unitString` |
+| Primary key | `csvw:primaryKey` |
+| Foreign key | `csvw:foreignKey` |
+| Unique and check constraints, indexes | `mc:constraint`, `mc:index` |
+| Annotations that only the profile uses | Profile annotations. mudcat keeps them, so that the profile can generate its own schemas and service metadata again |
 
 ### Arrays, streams and containers
 
@@ -209,13 +227,24 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
 
 **Dataset** (`mc:Dataset`, subclass of `dcat:Dataset`). A named, versioned set of data objects that mudcat treats as a unit (Datacat group; Rucio dataset). A dataset that grows over time with appended data is also a `dcat:DatasetSeries`.
 
-**Snapshot** (`mc:Snapshot`, subclass of `prov:Entity` and `prov:Collection`). An immutable version of a dataset. `dcat:hasVersion` and `dcat:previousVersion` link it.
+**Snapshot** (`mc:Snapshot`, subclass of `prov:Entity` and `prov:Collection`). An immutable version of a dataset. `dcat:hasVersion` and `dcat:previousVersion` link it. Each change to a dataset makes a new snapshot, as each commit to an Iceberg table does. mudcat does not change a snapshot after it makes it.
 
 - **Members** (`prov:hadMember`) are versions and annotation sets.
 - **Content hash.** The snapshot has a Merkle hash (`mc:contentHash`) over the hashes of its members. The Butler's collection-snapshot proposal does the same. Snapshots share their unchanged parts. It is possible to verify a snapshot from its hash alone.
-- **Lifecycle:** `working` (mutable, unhashed) → `published` (frozen) → `deprecated` → `withdrawn`.
+- **Parent and summary.** Each snapshot records its parent snapshot and a summary of the change. The summary gives the operation (add, remove, replace or annotate) and the number of members added and removed. The summary lets clients follow the history of a dataset without a comparison of member lists.
+- **Structural sharing.** A snapshot refers to its members through manifests. A new snapshot refers again to each manifest that did not change, and writes new manifests only for the changes. Iceberg shares manifests between table snapshots in the same way.
+- **Status:** `published`, `deprecated` or `withdrawn`, or no status for a snapshot that is not published.
   - Only published snapshots can be pinned into training-set specifications or cited.
   - mudcat can mint a DOI for a published snapshot.
+- **Retention.** mudcat keeps each published snapshot. A snapshot that is not published expires after a retention period that the dataset sets. It expires only if no ref and no pinned specification refers to it. Then it removes the manifests that only that snapshot used.
+
+**Ref** (`mc:Ref`). A named, mutable pointer from a dataset or a data object to one snapshot or version, as in Iceberg's branches and tags.
+
+- A **branch** moves when a writer commits a new snapshot to it, for example `main` or `curation`.
+- A **tag** does not move after mudcat creates it, for example `release-2026-11`.
+- **Publication** is a tag on a snapshot, and gives the snapshot the `published` status. This replaces a mutable "working" snapshot: work happens on a branch of immutable snapshots, and publication marks one of them. This is the write-audit-publish pattern of Iceberg users.
+- **Conditional updates.** A writer moves a branch only with a condition on the snapshot that the branch points to now. If another writer moved the branch first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits.
+- mudcat records the history of each branch, so a view can resolve a branch "as of" a time.
 
 **AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists (takedowns, opt-outs) are annotation sets.
 

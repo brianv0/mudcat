@@ -46,6 +46,9 @@ Identifier prefixes:
 | ID-4 | mudcat shall record a content checksum for each version, with the checksum algorithm. | Storage resources compute different algorithms; integrity checks need the algorithm with the value. | T |
 | ID-5 | mudcat shall compute a Merkle hash for each published snapshot from the hashes of its members. | A party that holds the hashes can verify a snapshot without trust in the database of another zone. | T |
 | ID-6 | When a zone registers a replica of a version that another zone produced, mudcat shall use the identifier that the producing zone minted. | Zones under shared custody must agree on identity without coordination at write time. | T |
+| ID-7 | mudcat shall move a branch only if the branch points to the snapshot that the request states. | Concurrent writers must not lose each other's changes; Iceberg commits use the same optimistic concurrency. | T |
+| ID-8 | mudcat shall keep each published snapshot until a person withdraws it. | Citations and pinned specifications refer to published snapshots. | T |
+| ID-9 | mudcat shall expire a snapshot that is not published only if no ref and no pinned specification refers to it. | Snapshots that no process uses must not use storage for ever, but expiry must not break a reference. | T |
 
 ## Structure and metadata
 
@@ -58,6 +61,7 @@ Identifier prefixes:
 | ST-5 | mudcat shall not need a list of elements to describe an array or a stream. | A list of every element of a 2 PB array store has no use and a high cost. | D |
 | ST-6 | mudcat shall validate metadata against the metadata schemas that apply to the entity. | iRODS attribute–value–unit metadata has no types and no schemas; sites built their own conventions to compensate. | T |
 | ST-7 | mudcat shall record for each metadata value if a person, a format plugin or a model asserted it. | Metadata that agents extract is now common, and users must be able to tell it apart. | T |
+| ST-8 | mudcat shall give each field an identifier that does not change when the field gets a new name. | Schema evolution and annotation sets must not break when a column gets a new name; Iceberg uses field IDs for the same reason. | T |
 
 ## Provenance
 

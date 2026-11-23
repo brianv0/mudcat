@@ -72,6 +72,7 @@ The catalog API is a stateless service with these interfaces:
 - **REST interface:** it has an OpenAPI description and uses JSON by default. Content negotiation gives JSON-LD with the published context. Paging uses cursors with a stable default order, and counts are estimates. To count results, Datacat's REST layer iterated over the full result set. pgstac documents the same failure mode.
 - **Bulk interface** for registration, manifest submission and resolution: Apache Arrow over HTTP or Arrow Flight. It handles millions of rows per call.
 - **Event stream** of catalog changes, for consumers that need it.
+- **Conditional commits.** A request that changes a dataset follows the commit shape of the Iceberg REST catalog. The request has a list of conditions and a list of changes. For example, the condition "branch `main` points to snapshot S" goes with the change "add these members". mudcat applies the changes in one transaction only if all the conditions are true. If not, it returns a conflict, and the client tries again. One request can change several datasets, in one transaction.
 
 ### Query compiler
 
@@ -89,7 +90,7 @@ Queries compile to SQL against the catalog database. Lineage operators use recur
 
 All writes from bulk clients and site agents go through a queue to a batched writer. This writer commits in large transactions. Before the Butler adopted this pattern, it measured inserts from hundreds of concurrent workers that took up to ten minutes.
 
-- **Idempotency:** the key for registration is (data object alias, content checksum), so retries are harmless.
+- **Idempotency:** the key for registration is (data object, content checksum), so retries are harmless.
 - **Ordering:** registration commits catalog rows before a producer may delete its staged copy. This avoids the Butler's orphaned-file problem in reverse.
 
 Interactive single writes bypass the queue but use the same transaction code.
@@ -138,6 +139,7 @@ The resolver serves reads, but it is not in the data path:
   - the **resolved manifest**, as Arrow files that list elements, selectors and replica URLs;
   - **credentials:** signed URLs, or vended credentials scoped to a prefix. The resolver issues prefix-scoped credentials only if the prefix is fully inside one ACL root that the caller can read. If not, the resolver issues signed URLs per object, in batches, as the job requests them. The resolver checks read permission on a snapshot once, at the snapshot. This check then covers all of the snapshot's members;
   - a **run token** that ties the job's reads to an activity record.
+- **Resolution in parts.** A large pinned specification can resolve to billions of elements. In this case, the resolver plans the resolution, as the server-side scan planning of the Iceberg REST catalog does. It returns a plan identifier and a list of parts. Workers then get the parts in parallel. Each part is a manifest file with its credentials.
 - **Observed capture.** The resolver logs the credentials that it issues under a run token. These logs give the `observed` usage relations.
 
 ### Policy engine and pinning service
@@ -147,7 +149,7 @@ There are five enforcement points: **registration**, **pinning**, **materialisat
 - **Access control.** The policy engine delegates access control to the authorization port (next section).
 - **Usage policy.** mudcat always evaluates usage policy itself, in SQL, over the usage grants, constraints and duties attached to sources. The **effective-policy cache** holds the accumulated duties per snapshot, representation and model. It is a derived index, and mudcat recomputes it after each change.
 - **Pinning.** The pinning service:
-  - resolves a specification to snapshot hashes;
+  - resolves a specification to snapshots, and records the identifier and the Merkle hash of each;
   - applies exclusion lists;
   - checks that every source that contributes grants the requested action and purpose;
   - writes the pinned specification with its policy decision and, where the provider issues one, the authorization consistency token.
@@ -260,7 +262,7 @@ A takedown, licence expiry or retention deadline starts a workflow:
 
 ### Gateways
 
-- **Iceberg REST catalog** for records-structured datasets. With it, Spark, Trino, DuckDB and PyIceberg can read these datasets by name. The gateway also vends credentials.
+- **Iceberg REST catalog** for records-structured datasets. With it, Spark, Trino, DuckDB and PyIceberg can read these datasets by name. The gateway also vends credentials. Optionally, the gateway can also show the manifest of any snapshot as an Iceberg table, so that these engines can query elements and their metadata. To do this, the gateway generates Iceberg metadata from mudcat's manifests. mudcat does not store its own state in Iceberg metadata files.
 - **Field gateways:** optional gateways that a field profile defines, listed in [fields.md](fields.md). They generate service metadata from CSVW descriptions through community schema profiles that are registered as plugins.
 - **Metadata export:** DCAT, Croissant 1.1, RO-Crate and DataCite, generated from the model for publication and citation.
 - **AI governance export:** SPDX 3 AI and Dataset profiles, and training-content summaries generated from pinned specifications.
@@ -424,7 +426,7 @@ Three mechanisms make this work without shared mutable state:
 ### Train a model
 
 1. A user submits a specification.
-2. The pinning service resolves it to snapshot hashes, applies exclusion lists and evaluates usage policy. Then it writes the pinned specification with its policy decision.
+2. The pinning service resolves it to snapshots, applies exclusion lists and evaluates usage policy. Then it writes the pinned specification with its policy decision.
 3. A suitable representation may not exist on a storage resource near the target cluster. In that case, mudcat creates a materialisation and a replication rule. The reconciler completes them.
 4. The job gets a resolved manifest, credentials and a run token from the resolver. Then it reads storage directly.
 5. At the end, the job publishes checkpoints as model versions. The catalog records the training activity with `observed` and `declared` relations, and the full run record as a bundle.
