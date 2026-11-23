@@ -49,6 +49,7 @@ Identifier prefixes:
 | ID-7 | mudcat shall move a branch only if the branch points to the snapshot that the request states. | Concurrent writers must not lose each other's changes; Iceberg commits use the same optimistic concurrency. | T |
 | ID-8 | mudcat shall keep each published snapshot until a person withdraws it. | Citations and pinned specifications refer to published snapshots. | T |
 | ID-9 | mudcat shall expire a snapshot that is not published only if no ref and no pinned specification refers to it. | Snapshots that no process uses must not use storage for ever, but expiry must not break a reference. | T |
+| ID-10 | mudcat shall make, on request, a snapshot of the versions that a collection subtree held at a given time. | Users who work by folder need citable, verifiable states of a folder; the Butler proposes the same operation. | T |
 
 ## Structure and metadata
 

@@ -246,6 +246,17 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
 - **Conditional updates.** A writer moves a branch only with a condition on the snapshot that the branch points to now. If another writer moved the branch first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits.
 - mudcat records the history of each branch, so a view can resolve a branch "as of" a time.
 
+**Snapshots and collections.** Snapshots belong to datasets, not to collections. This follows Iceberg, where each table has its own snapshots and a namespace has none. mudcat gives three things for collections instead:
+
+- **History of a collection.** mudcat keeps the transaction-time history of collection membership, aliases and refs (section 5, time travel). Thus a reader can list a collection subtree "as of" a time without a snapshot.
+- **Atomic changes.** One conditional commit can add or change many data objects in one or more collections, in one transaction. All of them appear at the same time.
+- **Snapshot on request.** A user can make a snapshot of a collection subtree as of a time. mudcat then makes a dataset whose snapshot contains the versions that the subtree held at that time, with a Merkle hash. The Butler's collection-snapshot proposal does the same. Such a snapshot can be published and cited like any other.
+
+mudcat does not make a snapshot for each change to a collection, for two reasons:
+
+- **Hot spots.** A hash over a subtree changes with each write under it. Every writer would then need a conditional update of the same ref at the root, and concurrent writers would conflict all the time.
+- **Size.** A collection that receives data all the time would make one snapshot for each change. The Butler team names one large, growing collection of raw data as a failure case. For such a collection, a dataset series with one snapshot for each period (for example one each day) is better.
+
 **AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the zone-wide invalidation set instead (section 5).
 
 **Representation** (`mc:Representation`, analogous to `dcat:Distribution`). One physical form of a snapshot, such as native HDF5, analysis-ready Zarr, Parquet, WebDataset shards or tokenized shards.
