@@ -316,9 +316,7 @@ Replication happens within one authority, which normally means one zone:
 - **Derived indexes:** search, vector and identity indexes, rebuilt from the change log wherever they are needed.
 - **Structural relationships:** copied into an external authorization service, with the catalog remaining their owner.
 
-The Butler team's draft diagnosis is that Rubin ran independent Butlers per site, bridged by Rucio and Kafka, for what is one organisation's data. That is federation used where replication within one authority was the right answer.
-
-Rucio's model, one catalog with many sites, is the pattern to follow inside an authority.
+Rucio's model, one catalog with many sites, is the pattern to follow inside one authority.
 
 ### Delegate
 
@@ -365,12 +363,39 @@ Between zones:
   - Other tombstones are queued for review.
 - **Data may never move at all.** An enclave zone may publish descriptions and lineage while forbidding any replica outside it. Models trained inside it are registered in it, with its obligations attached.
 
+### Shared custody: one dataset, several sovereign custodians
+
+Some collaborations sit between the two cases. Rubin is the main example:
+
+- One logical dataset, such as a data release, is produced by the collaboration.
+- Several institutions in different countries each hold, process and serve copies, and each wants ownership of its copies for sovereignty reasons: national law, funding-agency requirements, control over its own users and storage.
+- Neither single-authority replication nor loose federation fits:
+  - a single catalog would take sovereignty away from the custodians;
+  - independent catalogs lose the fact that it is one dataset. The Butler team's draft diagnosis of its multi-site problems is that collection structure and metadata corrections do not propagate, and there is no completeness check per site.
+
+mudcat treats this as federation with a shared namespace. Authority is split by kind of state, not by site:
+
+| State | Authority | Other zones |
+|---|---|---|
+| Definition of the logical dataset: data objects, published snapshots, corrections to metadata and reference data | The **producing zone** for each part. A part processed at a site is owned by that site's zone | Subscribe to it, and hold read-only copies of the descriptions |
+| A release that combines parts produced at several sites | A **release snapshot** whose members are the hashes of member snapshots from each producing zone. Each producer signs its members, and the release is co-signed | Verify it from the hashes alone |
+| Replicas, replica state and completeness on a site's storage | The **custodian zone** that owns that storage | Receive completeness records, which together give the global answer to "where are the copies" |
+| Access decisions for a site's users and copies | The **custodian zone** | — |
+| Minimum terms of use, such as data rights and proprietary periods | Set by the **publisher** in the agreement | Each custodian enforces them, and may add stricter local terms but not looser ones |
+| Local additions: annotation sets, local metadata, derived products | The zone that created them | Shared if the agreement says so |
+
+Three mechanisms make this work without shared mutable state:
+
+- **Content-derived identifiers.** A version's identifier is derived from its data object's identifier and its content checksum (model, Identity). Every zone that registers a copy therefore arrives at the same identifier, as the Butler does with deterministic UUIDs where sites must agree.
+- **Hash-identified snapshots.** Snapshots are Merkle hashes, so a release made of parts owned by different zones can be verified by anyone holding the hashes, and no zone has to trust another zone's database.
+- **The federation feed.** Corrections and tombstones flow from producers, and completeness flows from custodians, as signed events. A failure to apply one is visible, because each custodian publishes the snapshot hashes it holds completely.
+
 ### Decision table
 
 | State | Within one authority | Across authorities |
 |---|---|---|
 | Bytes | Replicate, by replication rules | Copies only under an agreement, which carries obligations; enclave data never leaves |
-| Catalog records | Single primary with read replicas | Federate; exchange published, immutable descriptions |
+| Catalog records | Single primary with read replicas | Federate; exchange published, immutable descriptions. Under shared custody, the producing zone owns definitions and each custodian owns its replica records |
 | Search and identity indexes | Derived and replicated freely | Each zone builds its own; it may include harvested descriptions |
 | Provenance | Single primary; run records as catalogued files | Exchange summaries; detail stays with the owning zone |
 | Identity | Delegate to the identity provider | Federate through OIDC |

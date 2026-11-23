@@ -22,7 +22,12 @@ An entity is a node of a `mc:` class. "Subclass of" means `rdfs:subClassOf`.
 
 ### Identity
 
-Every entity has an opaque, immutable identifier: a time-ordered UUID (UUIDv7) qualified by the zone that minted it, published as an IRI. Names, paths and external identifiers are **aliases**. They are mutable, unique within their scheme, and point at an identifier.
+Every entity has an immutable identifier, published as an IRI. Names, paths and external identifiers are **aliases**. They are mutable, unique within their scheme, and point at an identifier.
+
+There are two kinds of identifier:
+
+- **Minted identifiers.** Most entities get a time-ordered UUID (UUIDv7) qualified by the zone that minted it. That zone is the entity's authority.
+- **Content-derived identifiers.** Versions are identified by a name-based UUID (UUIDv5) computed from the data object's identifier and the version's content checksum. Snapshots are identified by their Merkle hash. Content-derived identifiers let independent zones that hold copies of the same content agree on its identity without coordinating. This matters under shared custody (see [architecture.md](architecture.md)).
 
 External alias schemes include:
 
