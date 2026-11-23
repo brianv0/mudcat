@@ -18,7 +18,7 @@ For any piece of data and any model, mudcat answers five questions:
 
 | Document | Contents |
 |---|---|
-| [docs/model.md](docs/model.md) | The conceptual data model, expressed with RDF vocabularies (PROV-O, DCAT, CSVW, ODRL), and how it maps to Datacat, iRODS, Rucio and the Butler |
+| [docs/model.md](docs/model.md) | The conceptual data model: RDF vocabularies (PROV-O, DCAT, CSVW, and ODRL for terms of use), Zanzibar-style access control, and how it maps to Datacat, iRODS, Rucio and the Butler |
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
 
 The research behind the design is in the Datacat fork, at [brianv0/datacat, branch `claude/cool-keller-domhwr`](https://github.com/brianv0/datacat/tree/claude/cool-keller-domhwr). Its `reports/` directory holds the two reports and `research_notes/` holds the supporting notes.
@@ -30,6 +30,7 @@ The research behind the design is in the Datacat fork, at [brianv0/datacat, bran
 - **Not everything is a table.** Every version carries a structure descriptor. Elements are listed only when the data itself lists them: arrays and streams are addressed by coordinates and time spans.
 - **Immutable things, mutable pointers.** Versions, snapshots, pinned training-set specifications and provenance records never change. Names, tags and lifecycle states do.
 - **Outside the read path.** mudcat resolves names to replicas and issues credentials. It never proxies data reads.
+- **Pluggable authorization.** Access control is modelled as Zanzibar-style relationships, and can be served by mudcat itself or by an external service such as SpiceDB or OpenFGA, self-hosted or managed. Usage policy is always evaluated by mudcat.
 - **Small to run.** A single PostgreSQL database is the only required dependency. Search, vector and identity indexes are optional, derived and rebuildable.
 
 ## Development process

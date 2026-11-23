@@ -12,6 +12,7 @@ Status: sketch. This document describes the components, where state lives and th
 | Small teams must be able to run it | PostgreSQL is the only required dependency; every other index is optional and rebuildable |
 | Mixed data structures | Format plugins produce structure descriptors; selectors address parts without enumeration |
 | Usage policy, takedowns, legal holds | A fixed set of enforcement points; deletion as a tracked workflow |
+| Organisations already run Zanzibar-style authorization services | Access checks go through an authorization port with built-in, SpiceDB and OpenFGA adapters |
 | Bulk registration from many workers | A batched ingest writer; workers never write rows one at a time |
 
 ## Planes
@@ -142,9 +143,77 @@ The resolver serves reads without being in the data path:
 
 There are five enforcement points: **registration**, **pinning**, **materialisation**, **export** and **deletion**. Everything else happens asynchronously from the change log. This follows the iRODS policy enforcement point idea, without a general rule language in the request path.
 
-- **Access control.** Inherited ACLs and compartments are evaluated in SQL.
-- **Usage policy.** Policies in the supported ODRL subset are evaluated over sources, and their obligations propagate along lineage. The **effective-policy cache** holds the propagated obligations per snapshot, representation and model. It is a derived index, recomputed on change.
-- **Pinning.** The pinning service resolves a specification to snapshot hashes, applies exclusion lists and policy, writes the pinned specification with its policy decision, and fails if a required component is not permitted.
+- **Access control.** Delegated to the authorization port (next section).
+- **Usage policy.** Always evaluated by mudcat, in SQL, over the usage grants, constraints and duties attached to sources. The **effective-policy cache** holds the accumulated duties per snapshot, representation and model. It is a derived index, recomputed on change.
+- **Pinning.** The pinning service:
+  - resolves a specification to snapshot hashes;
+  - applies exclusion lists;
+  - checks that every contributing source grants the requested action and purpose;
+  - writes the pinned specification with its policy decision, including the authorization consistency token where the provider issues one.
+
+  It fails if a required component is not permitted.
+- **Terms compiler.** Compiles licence identifiers and ODRL documents into grants, constraints and duties, and queues anything it cannot translate for review.
+
+### Authorization port
+
+Access checks go through one internal interface, so they can be served by mudcat itself or by an external Zanzibar-style service, self-hosted or managed.
+
+| Adapter | Backing service | Deployment |
+|---|---|---|
+| Built-in | Relationship tuples in the catalog's PostgreSQL, evaluated with recursive SQL | Development and lab profiles; no extra dependency |
+| SpiceDB | SpiceDB, self-hosted or as AuthZed's managed service | Lab and multi-site |
+| OpenFGA | OpenFGA, self-hosted or as Okta FGA (managed OpenFGA) | Lab and multi-site |
+| Others | Any service that supports the same operations, for example Ory Keto (Ory Network) | Through the same adapter contract |
+| Cedar (partial) | Cedar or Amazon Verified Permissions | Policy-based, not tuple-based; mudcat supplies entity data with each request. Supports checks, not reverse lookups |
+
+Managed offerings change often; confirm the current ones and their API coverage before choosing.
+
+**The interface** covers the operations all Zanzibar-style services share:
+
+| Operation | Purpose | SpiceDB | OpenFGA |
+|---|---|---|---|
+| Write and delete relationships, idempotently | Grants and structural sync | WriteRelationships | Write |
+| Check one permission | Per-request authorization | CheckPermission | Check |
+| Check many permissions | Bulk resolution, result filtering | CheckBulkPermissions | BatchCheck |
+| List objects a subject can reach | Search pre-filtering | LookupResources | ListObjects |
+| List subjects with a permission | Sharing UI, audit | LookupSubjects | ListUsers |
+| Read relationships | Reconciliation, export | ReadRelationships | Read |
+| Load and validate the schema | Deployment | WriteSchema | WriteAuthorizationModel |
+
+**A neutral schema.** mudcat's authorization schema is written once in a neutral form and compiled to each provider's schema language (the SpiceDB schema language, the OpenFGA modelling language, a Cedar schema with policies). The core schema uses only features both main implementations support:
+
+- direct relations;
+- subject sets such as `group#member`;
+- union, intersection and exclusion;
+- following a relation to another object (SpiceDB arrows, OpenFGA tuple-to-userset);
+- public wildcards;
+- conditions written in CEL with request context (SpiceDB caveats, OpenFGA conditions), used for ticket expiry, embargo dates and use counts.
+
+Provider-specific features, such as SpiceDB's native relationship expiry or its all-parents arrow, may be used only in optional extensions, never in the core schema.
+
+**Identifiers.** Objects are identified as `type:uuid`, with no paths or names, so renames never touch the authorization service and identifiers stay within provider length and character limits.
+
+**Keeping the two stores consistent.**
+
+- **Writes.** Relationship changes are written to the catalog's outbox in the same transaction as the catalog change. A sync worker applies them to the external service idempotently and stores the provider's consistency token where one is returned.
+- **Visibility of new objects.** Until a new object's relationships are acknowledged, it is visible only to its creator. Interactive API calls can instead wait for acknowledgement.
+- **Revocation.** Grant removals, takedowns and compartment changes are checked with the provider's strongest consistency mode (a fully consistent or at-least-as-fresh request in SpiceDB, higher consistency in OpenFGA), so that a revocation applies to every check made after it.
+- **Drift repair.** A reconciler periodically compares catalog-owned relationships with the provider's copy and repairs differences.
+
+**Filtering large result sets.** Search never asks the provider to check every result.
+
+1. The catalog asks for the small set of ACL roots and compartments the subject can read (a lookup over a few thousand objects at most), caches it briefly, and filters in SQL.
+2. Per-object checks are used only for objects shared individually, and run as bulk checks.
+
+Provider list operations have result limits, OpenFGA's especially, which is why the coarse set is computed first.
+
+**Failure behaviour.**
+
+- **Fail closed.** If the provider is unreachable, requests are denied.
+- **Bounded decision cache.** Cached decisions have a short time-to-live and are never used for revocation-sensitive checks.
+- **Audit.** Every decision used at an enforcement point is written to the audit table, with its provider token where one exists.
+
+**Conformance tests.** One suite of authorization scenarios runs against every adapter: inheritance through ACL roots, compartments, tickets, revocation ordering and lookups. An adapter is supported only if it passes.
 
 ### Index builders
 
@@ -285,13 +354,14 @@ A single PostgreSQL primary is a single-region write dependency. Multi-region de
 - **Catalog database:** PostgreSQL 16 or later, with `ltree` and `pgvector`.
 - **Manifests:** Parquet, with Lance where random access is needed.
 - **Query engine for manifest scans:** DuckDB embedded, with DataFusion or Trino for large scans.
+- **Authorization:** the built-in adapter by default; SpiceDB or OpenFGA (self-hosted or managed) through the authorization port.
 - **Events:** CloudEvents over the outbox relay. A Kafka or NATS bridge only where a site already runs one.
 
 ## Build order
 
 1. **Core catalog.** Namespace, data objects, versions, replicas, structure descriptors with the CSVW model, typed metadata, the query language, bulk ingest, the Python SDK and CLI, and an importer from existing Datacat databases.
 2. **Snapshots and provenance.** Datasets, snapshots, annotation sets, PROV relations, the run context, OpenLineage and MLflow ingest, and the change log.
-3. **Specifications and policy.** Sources, the ODRL subset, pinning, resolved manifests and credentials, and data loader integrations.
+3. **Specifications and policy.** Sources, usage grants and duties, the terms compiler, pinning, the authorization port with the built-in adapter, resolved manifests and credentials, and data loader integrations. SpiceDB and OpenFGA adapters follow once the conformance suite exists.
 4. **Identity and evaluation.** The content-identity index (exact checksums first), similarity criteria, leakage assertions, and the deletion workflow.
 5. **Placement and federation.** Replication rules, the reconciler, movers, completeness, and federation feeds.
 6. **Gateways.** Iceberg REST, TAP, Croissant, DCAT and RO-Crate export, and the MCP server, added as users ask for them. MCP is cheap and can come earlier.
@@ -304,4 +374,5 @@ Each step is useful without the next. The first two together are already a bette
 - **Single-row writes:** whether they should also go through the ingest queue, for simpler consistency, at the cost of latency.
 - **Element-level policy:** how far it should go beyond exclusion lists.
 - **Federation trust:** how zones authenticate one another, and whether a received tombstone must be honoured automatically.
+- **Authorization source of truth:** whether grants should be owned by the external service when one is configured, instead of by mudcat with a synchronised copy.
 - **Embedded mode:** whether an embedded SQLite mode is worth maintaining alongside PostgreSQL.

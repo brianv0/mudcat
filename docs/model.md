@@ -11,7 +11,7 @@ The model is expressed in RDF using existing W3C and community vocabularies, and
 | `prov:` | W3C PROV-O | Entities, activities, agents, usage, derivation, invalidation |
 | `dcat:` | W3C DCAT 3 | Datasets, dataset series, versions, distributions, data services |
 | `csvw:` | W3C CSV on the Web | Record (tabular) structure: tables, columns, datatypes, keys |
-| `odrl:` | W3C ODRL 2.2 | Usage policy: permissions, prohibitions, duties, constraints |
+| `odrl:` | W3C ODRL 2.2 | Terms of use as received and published (licences, contracts, opt-out policies) |
 | `oa:` | W3C Web Annotation | Selectors into parts of a resource |
 | `dcterms:` | Dublin Core terms | Titles, descriptions, licences, dates, creators |
 | `qudt:` | QUDT | Units of measure (with UCUM codes) |
@@ -51,7 +51,7 @@ Versions, snapshots, pinned specifications, policy decisions and provenance reco
                                                    │   │                         (records│array│stream│…)
                                          replicaOf │   │ hasSource
                                                    ▼   ▼
-             StorageResource ◄── storedOn ── Replica   Source ── policy ──► odrl:Policy
+             StorageResource ◄── storedOn ── Replica   Source ── terms ───► odrl:Policy
                                                    ▲
                       Dataset ── hasVersion ──► Snapshot ── hasMember ──► Version / AnnotationSet
                                                    │
@@ -237,7 +237,7 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
 
 **Selection** (`mc:Selection`). A no-copy subset of one or more snapshots, defined by a predicate or an explicit list of elements, together with the hash of the resolved element list.
 
-## 5. Sources, access and usage policy
+## 5. Sources, access control and usage policy
 
 ### Sources
 
@@ -256,30 +256,59 @@ A **source** (`mc:Source`, subclass of `prov:Entity`) records where data origina
 
 ### Access control
 
-Access control decides who may read and change catalog entries and data. It follows Datacat and iRODS practice:
+Access control decides who may read, change and administer catalog entries and the data they describe. It is modelled as relationships, in the style of Google's Zanzibar, so that it can be served either by mudcat itself or by an external Zanzibar-style service (see the authorization section of [architecture.md](architecture.md)).
 
-- **ACLs.** Access-control lists sit on collections and are inherited, never stored per file.
-- **Principals** are users, groups and service accounts.
-- **Permissions:** read, insert, write, delete, admin (Datacat's set, comparable to iRODS read, write and own).
-- **Tickets.** iRODS-style tickets grant delegated, time-limited or use-limited access.
-- **Compartments** (`mc:Compartment`) are labels that additionally require membership of a named group, for partner segregation and restricted evaluation sets.
+- **Object types:** zone, collection, data object, dataset, snapshot, specification, model, storage resource, group, compartment, ticket.
+- **Relations** connect objects to subjects or to other objects, for example `collection#owner`, `collection#writer`, `collection#reader`, `collection#acl_root`, `dataset#collection`, `group#member`, `compartment#member`. A subject is a user, a service account, or a set of subjects such as `group:astro#member`.
+- **Permissions** are computed from relations by union, intersection and exclusion, and by following a relation to another object. For example, read is granted to the readers, writers and owners of the collection's ACL root, intersected with membership of the object's compartment, if it has one.
+- **Datacat's permission set** (read, insert, write, delete, admin) maps onto permissions in this schema. iRODS read, write and own map onto the same set.
+
+Three rules keep the schema portable and the graph shallow:
+
+- **ACL roots.** Datacat's rule is kept: a collection without its own ACL inherits from the nearest ancestor that has one. mudcat maintains an `acl_root` relation from every collection to that ancestor, so a check follows one hop however deep the folder tree is. External services cap resolution depth, typically at a few dozen hops.
+- **Tickets.** An iRODS-style ticket becomes a relationship whose condition limits it by expiry time or use count.
+- **Compartments.** A compartment is an intersection: membership of the compartment's group is required in addition to the ordinary grant. Compartments implement partner segregation and restricted evaluation sets.
+
+**Ownership of relationships:**
+
+- **Catalog-owned.** Relationships that follow from catalog structure (parent collection, ACL root, dataset membership) are owned by mudcat and synchronised to any external service.
+- **Written through mudcat's API.** Grants (who is a reader or writer) are written through mudcat's API.
+- **Externally owned.** Group membership may be owned by the identity provider or by the authorization service.
 
 ### Usage policy
 
-Usage policy decides what data may be used for. It is separate from access control because permission to read is not permission to train. Policies are expressed in **ODRL 2.2**:
+Usage policy decides what data may be used for. It is separate from access control because permission to read is not permission to train. It has two parts, both held in the catalog database and evaluated by mudcat whichever authorization service is used.
 
-- an `odrl:Policy` (Set, Offer or Agreement);
-- containing `odrl:permission`, `odrl:prohibition` and `odrl:obligation` rules;
-- each rule has an action:
-  - `odrl:use`, `odrl:distribute`, `odrl:derive`;
-  - mudcat-defined actions `mc:train`, `mc:evaluate`, `mc:fineTune`, `mc:publishDerivative`;
-- and constraints on purpose (`odrl:purpose`, with `dpv:` purposes), time (`odrl:dateTime`, for expiry) and place (`odrl:spatial`, for jurisdiction).
+**Usage grants** (`mc:UsageGrant`). A relation between a source and a permitted (action, purpose) pair:
 
-mudcat **evaluates a restricted subset** of ODRL: an enumerated set of actions, purposes and constraint operators. Policies outside that subset are stored and shown but flagged for human review, not evaluated.
+- **Actions:** `mc:use`, `mc:train`, `mc:evaluate`, `mc:fineTune`, `mc:distribute`, `mc:publishDerivative`.
+- **Purposes:** taken from DPV where possible, for example research, commercial research or product development.
 
-Policies attach to sources, and optionally to datasets and collections.
+Grants have the same shape as access relationships, for example `source:X#train@purpose:research`, so they can be mirrored to an external Zanzibar-style service for online checks. Enforcement does not depend on that mirror (see pinning, below).
 
-**Obligations propagate** along `prov:wasDerivedFrom` and training usage to everything derived, models included. Examples are attribution, expiry and destruction at close-out. Conflicts are flagged, never resolved silently.
+**Constraints and duties** are structured records attached to sources:
+
+- **Constraints:** expiry date, permitted jurisdictions, permitted compute locations, embargo end.
+- **Duties** (`mc:Duty`): attribute, delete at close-out, honour opt-outs, notify the licensor, do not redistribute derivatives.
+
+Duties **propagate** along `prov:wasDerivedFrom` and training usage to everything derived, models included. They accumulate. Conflicts are flagged, never resolved silently.
+
+**Evaluation at pinning.** A training-set specification is permitted for an (action, purpose) only if every contributing source grants it and no constraint excludes it. The pinning service computes this as set operations in SQL over the sources of all components, typically thousands to millions of them, not as one check per source. It also records the accumulated duties in the policy decision.
+
+### Terms of use
+
+The terms themselves (what a licence or contract says) are kept separately from the compiled grants, constraints and duties. They are recorded in **ODRL 2.2** (`odrl:Policy`) where possible:
+
+| Terms arrive as | Handling |
+|---|---|
+| A standard licence identifier (SPDX: `CC-BY-4.0`, `CC-BY-NC-4.0`, `Apache-2.0`, …) | Mapped to a pre-compiled set of grants, constraints and duties |
+| An ODRL document: a data-space contract, a TDM Reservation Protocol opt-out policy, a RightsML licence | Compiled automatically; clauses that cannot be translated are flagged for review |
+| A contract in plain text | A person records the grants and duties, and the document is attached |
+
+- **Traceability.** Each compiled grant, constraint and duty records the clause it came from.
+- **Partial compilation.** A source whose terms were only partly compiled is marked as such. Pinning blocks any purpose that depends on the untranslated part until a reviewer signs off.
+- **Export.** Terms are exported with published snapshots (`odrl:hasPolicy` in DCAT, and in Croissant and RO-Crate exports) and carried by the federation feed between zones.
+- **Negotiation.** A zone can publish an ODRL offer and record the accepted agreement before data is exchanged.
 
 ### Deletion and holds
 
@@ -409,8 +438,8 @@ Transfers are carried out by external movers; mudcat records the requests and th
 | Metadata attribute | `csvw:Column`, `csvw:propertyUrl` | User metadata | AVU | DID metadata | Dimension record fields |
 | Reference data | `csvw:foreignKey` | Foreign metadata | — | — | Dimension records |
 | View | — | View (version, site) | — | — | Collection search path |
-| Access control | — | ACL | ACL, ticket | Account permissions | Repository groups |
-| Usage policy | `odrl:Policy` | — | Rules (partly) | — | — |
+| Access control | Zanzibar-style relationships | ACL | ACL, ticket | Account permissions | Repository groups |
+| Usage policy | `mc:UsageGrant`, `mc:Duty`; terms as `odrl:Policy` | — | Rules (partly) | — | — |
 | Provenance | PROV-O | — | Audit (partly) | — | Provenance quantum graph |
 | Specification | `prov:Plan` | — | — | — | Pipeline and quantum graph (partly) |
 | Replication rule | — | — | Resource hierarchy | Replication rule | — |
@@ -419,7 +448,7 @@ Transfers are carried out by external movers; mudcat records the requests and th
 
 - **Element identifiers.** Should element identifiers be IRIs in all exports? This is cheap for manifests, but at 10^11 elements the RDF serialisation must stay optional.
 - **IVOA UCD IRIs.** Which UCD IRI form should be used, and should mudcat publish one where the IVOA does not?
-- **Policy subset.** How much of ODRL to evaluate. The starting proposal is the actions and constraints listed in section 5.
+- **Grant vocabulary.** Which actions and purposes the first release enumerates, and how much of ODRL the compiler translates automatically.
 - **Snapshot hashing.** How the snapshot hash is canonicalised: member ordering, and whether annotation sets are included.
 - **Sample identity across rules.** Whether sample rules for arrays should produce stable sample identifiers, or whether selectors are enough.
 - **Representing a model.** Whether a model is a data object, a dataset of checkpoints, or both.
