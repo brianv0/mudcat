@@ -135,7 +135,7 @@ The resolver serves reads without being in the data path:
 - **Name resolution.** Resolves names through views to one version and its best replica for the caller's compute location: verified, nearest, cheapest, and permitted by jurisdiction and egress rules.
 - **Job resolution.** For a training or analysis job, resolves a pinned specification and returns three things:
   - the **resolved manifest**, as Arrow files listing elements, selectors and replica URLs;
-  - **credentials:** signed URLs, or vended credentials scoped to a prefix;
+  - **credentials:** signed URLs, or vended credentials scoped to a prefix. Prefix-scoped credentials are issued only when the prefix lies entirely inside one ACL root the caller can read; otherwise the resolver issues signed URLs per object, in batches, as the job requests them. Read permission on a snapshot is checked once, at the snapshot, and then covers all of its members;
   - a **run token** that ties the job's reads to an activity record.
 - **Observed capture.** Credentials issued under a run token are logged, which yields the `observed` usage relations.
 

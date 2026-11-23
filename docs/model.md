@@ -284,6 +284,52 @@ The `acl_root` relation preserves Datacat's override semantics. Additive grants 
 
 For contrast, iRODS copies a collection's ACL onto new objects at creation time, so later changes to the collection do not apply to existing objects. Rucio and the Butler grant permissions per account or per repository.
 
+#### Granularity: containers by default, objects by exception
+
+Grants are made on containers by default. Grants on individual objects are allowed as exceptions. Grants on individual files and elements are discouraged.
+
+There are two containment structures, and they play different roles:
+
+| Structure | Contains | Role in access control |
+|---|---|---|
+| Collection (Datacat folder) | Data objects and collections; each data object is in exactly one collection | **Custody.** Who may read, write and administer the data. ACLs normally sit here |
+| Dataset and snapshot (Datacat group) | Versions, possibly from many collections; a version can be in many datasets | **Sharing.** Granting read on a published snapshot gives access to its members without changing their collections' ACLs |
+
+The rules by tier:
+
+| Tier | Entities | Grants |
+|---|---|---|
+| Containers | Collections, datasets | The normal place for grants, through ACL roots |
+| Rich entities | Snapshots, specifications, models, evaluation suites | Individual grants allowed, since there are at most millions of them |
+| Cheap entities | Data-object versions and replicas | Individual grants only as exceptions: one shared file, or one file withdrawn from an otherwise readable collection (an exclusion relation). The catalog reports how many exist |
+| Elements | Parts of a version | No access grants. Element-level control is usage policy (exclusion lists) or redaction tiers (separate annotation sets with their own compartment) |
+
+**Access through a dataset is a capability, not a set of per-file tuples.**
+
+- A snapshot can have millions of members. Writing a relationship from each member to each snapshot that contains it would multiply relationship counts by the number of snapshots.
+- Instead, read permission on a snapshot is checked once, at the snapshot. The resolver then lists the snapshot's members and issues credentials for them.
+- A member is therefore readable through a snapshot only by resolving that snapshot, never by browsing the member's own collection.
+
+**Per-object conditions are evaluated by the catalog.** Some conditions differ from object to object, such as an astronomy observation's proprietary period or a patient record's consent status. These are not written as one conditional relationship per object.
+
+- The authorization service decides the container-level grant.
+- The catalog adds a predicate over the object's own metadata in SQL, for example `release_date <= now()` unless the caller is in the proposal's group.
+- Effective access is the conjunction of the two.
+
+**Usage policy follows sources, not containers.** Sources cut across collections and datasets, which gives three independent axes:
+
+- custody follows collections;
+- sharing follows datasets;
+- usage rights follow sources.
+
+Keeping them separate prevents folder layout from being forced to mirror licence boundaries.
+
+**Storage layout should follow access boundaries.**
+
+- Enforcement on object storage is ultimately done by the credentials the resolver issues.
+- Credentials scoped to a prefix are only safe if the prefix contains nothing the caller may not read.
+- Collections that are ACL roots should therefore map to their own storage prefixes, through the storage resource's deterministic path function. Where they cannot, the resolver must fall back to signed URLs per object.
+
 **Ownership of relationships:**
 
 - **Catalog-owned.** Relationships that follow from catalog structure (parent collection, ACL root, dataset membership) are owned by mudcat and synchronised to any external service.
