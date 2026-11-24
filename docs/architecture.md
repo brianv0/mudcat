@@ -506,6 +506,7 @@ This is the deletion workflow above. A tombstone on a source or element starts i
 | Development | Single process with PostgreSQL in a container; plugins run in-process | Laptops, CI, tests |
 | Lab | Catalog API, ingest writer and index builders on one node, PostgreSQL, one site agent per storage resource | AI-for-science startups and single-site groups |
 | Multi-site | One zone per administrative domain, PostgreSQL with read replicas, agents at every storage resource, optional OpenSearch, federation feeds between zones | Collaborations, multi-cloud labs, national facilities |
+| Hosted | A vendor runs the control plane for many tenants; site agents run in each customer's environment. See [hosted.md](hosted.md) | Teams that do not want to operate mudcat |
 
 A single PostgreSQL primary is a single-region write dependency. Multi-region deployments either accept that and use read replicas elsewhere, or run one zone per region and federate. This document proposes no multi-primary design.
 

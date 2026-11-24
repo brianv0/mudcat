@@ -116,6 +116,7 @@ Identifier prefixes:
 | RD-2 | mudcat shall resolve a pinned specification to a manifest of elements, selectors and replica URLs in one request. | Batch jobs must not query the catalog once per file. | T |
 | RD-3 | mudcat shall issue credentials scoped to a prefix only if the prefix is completely inside one ACL root that the caller can read. | Credentials scoped to a prefix give access to everything under that prefix. | T |
 | RD-4 | mudcat shall select the replica for a read from the verified replicas that the jurisdiction and egress rules of their storage resources permit. | Data must not leave a place where law or contract keeps it. | T |
+| RD-5 | When a zone uses the credential-broker mode, mudcat shall issue storage credentials only through a broker that runs in the customer's environment. | Regulated customers of a hosted service must keep the vendor without access to their bytes. | T |
 
 ## Placement and federation
 
@@ -150,6 +151,11 @@ Identifier prefixes:
 | OP-4 | mudcat shall commit catalog rows for a registration before it reports the registration as complete. | Producers must not delete a staging copy that the catalog does not record. | T |
 | OP-5 | mudcat shall accept a repeated registration of the same data object and checksum without a duplicate entry. | Batch jobs retry. | T |
 | OP-6 | mudcat shall seal unsealed member rows into manifest files without a change to the members or the Merkle hash of any snapshot. | Maintenance must not change what a snapshot contains. | T |
+| OP-7 | mudcat shall run the same release as a hosted service and as a self-hosted installation. | Customers must be able to move between hosted and self-hosted operation. | I |
+| OP-8 | mudcat shall keep the catalog of each zone in a database or schema that holds no other tenant's data. | Tenant isolation, recovery and deletion are simpler and safer per zone. | I |
+| OP-9 | mudcat shall connect site agents to the control plane only through connections that the agents open. | Customers must not need to open inbound ports. | D |
+| OP-10 | mudcat shall export a complete zone in a form that the self-hosted release can import. | Customers must be able to leave the hosted service without loss. | T |
+| OP-11 | mudcat shall keep the metadata of each zone in the region that the zone selects. | Metadata can be sensitive and subject to residency rules. | I |
 
 ## Performance and scale
 

@@ -20,6 +20,7 @@ For any piece of data and any model, mudcat answers five questions:
 |---|---|
 | [docs/model.md](docs/model.md) | The conceptual data model: RDF vocabularies (PROV-O, DCAT, CSVW, and ODRL for terms of use), Zanzibar-style access control, and how it maps to Datacat, iRODS, Rucio and the Butler |
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
+| [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
 | [docs/requirements.md](docs/requirements.md) | The system requirements, written to the NASA guidance for requirements, with a rationale and a verification method for each |
 | [docs/fields.md](docs/fields.md) | Guidelines for each scientific and technical field: domain semantics, schema profiles, formats and examples |
 
