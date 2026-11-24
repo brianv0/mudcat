@@ -57,10 +57,11 @@ zone: mudcat zone {
     shape: cylinder
   }
 
-  consumers: Change-log consumers {
-    grid-columns: 4
+  consumers: "Background workers (change log and schedules)" {
+    grid-columns: 5
     index: "Index builders\nsearch · vector · identity"
     lineage: "Lineage ingest\nOpenLineage · MLflow · …"
+    maintenance: "Catalog maintenance\nseal and merge manifests\nexpire snapshots"
     placement: Placement reconciler
     deletion: Deletion workflow
   }
@@ -157,6 +158,8 @@ Agent tasks:
 - **Checksum verification,** on a policy-driven schedule. Where possible, agents use checksums that the storage provider already computed.
 - **Deletion,** with a receipt per replica.
 - **Transfers,** which agents hand to movers.
+- **Consistency checks.** Agents compare storage inventories with the replica records, to find dark data (files that no replica describes) and lost replicas.
+- **Data compaction and rewrites,** when the maintenance section below assigns them to the site.
 
 Agents report results through the ingest writer.
 
@@ -292,6 +295,29 @@ A takedown, licence expiry, retention deadline or erasure request starts a workf
 6. Make redacted successors of the affected snapshots where their owners want them. The original snapshots keep their hashes.
 7. Flag the models trained on affected data, with the number of affected elements. A person then makes a decision, and the workflow records it.
 8. Send the tombstone on the federation feed to the zones that hold copies.
+
+### Maintenance
+
+Iceberg deployments run table maintenance: data-file compaction, manifest rewrites, snapshot expiry and orphan-file removal. mudcat needs the same kinds of work, but splits it by what the work touches.
+
+| Task | Touches | Who does it |
+|---|---|---|
+| Seal recent member rows into manifest files; merge small manifests | Catalog database and the zone's manifest store | Catalog maintenance, a central background worker |
+| Expire unpublished snapshots that nothing refers to; remove the manifests that only they used | Catalog database and manifest store | Catalog maintenance |
+| Rebuild and verify derived indexes | Derived indexes | Index builders |
+| Verify checksums; find dark data and lost replicas | Bytes on a storage resource | Site agents |
+| Compact small data files into larger shards; rewrite files to drop purged content | Bytes on a storage resource | A transform activity that site agents or external compute run |
+| Maintain registered external tables (Iceberg, Delta, Lance) | The table's own files | Delegated to the table's engine; mudcat records the new table snapshot |
+| Remove bytes for a takedown or expiry | Bytes on a storage resource | Deletion workflow, through site agents |
+
+**Compaction of data files is not invisible in mudcat.** In Iceberg, compaction replaces data files under the same logical table, and readers do not see a change. In mudcat, files are immutable versions with checksums, replicas and lineage. Thus compaction is a transform activity:
+
+- It makes a new **representation** of the same snapshot. The logical members do not change, so pinned specifications stay valid.
+- mudcat records the activity, with its inputs and outputs, in provenance.
+- Replication rules then move to the new representation, and the replicas of the old representation retire under their normal retention.
+- A rewrite that drops purged content makes a redacted successor snapshot instead, because the logical members change.
+
+**Catalog maintenance runs from schedules and from the change log.** It seals manifests when the unsealed rows of a dataset pass a size or age limit. It also runs expiry each day. It never changes a published snapshot or its Merkle hash: sealing changes only where the members are stored, not what they are.
 
 ### Gateways
 

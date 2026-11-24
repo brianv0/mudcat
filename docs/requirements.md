@@ -74,6 +74,7 @@ Identifier prefixes:
 | PR-4 | mudcat shall record usage relations for reads that a job makes with credentials that mudcat issued under a run token. | Provenance that users must declare by hand is usually incomplete. | T |
 | PR-5 | mudcat shall store the full record of a run as a catalogued version and keep a summary of its relations in the catalog database. | The Butler moved provenance into files to make schema changes easier. | I |
 | PR-6 | mudcat shall import OpenLineage events as activities and relations. | Spark, Airflow, dbt and Flink emit OpenLineage events. | T |
+| PR-7 | mudcat shall record each compaction or rewrite of data files as an activity that generates a new representation or a redacted successor snapshot. | Files are immutable versions with lineage, so a silent rewrite would break provenance and verification. | T |
 
 ## Access control
 
@@ -125,6 +126,7 @@ Identifier prefixes:
 | PL-3 | mudcat shall exchange only published, immutable descriptions with other zones. | Zones must not share mutable state. | I |
 | PL-4 | mudcat shall make access decisions only for data on storage resources that its own zone owns. | Under federation the zone that owns the data decides. | T |
 | PL-5 | mudcat shall sign each event that it sends on the federation feed. | Receiving zones must verify where an event came from. | T |
+| PL-6 | mudcat shall report each file on a storage resource that no replica record describes, and each replica record whose file is missing. | Dark data and lost replicas make the catalog wrong; Rucio runs the same consistency checks. | T |
 
 ## Interfaces and standards
 
@@ -147,6 +149,7 @@ Identifier prefixes:
 | OP-3 | mudcat shall rebuild a derived index while the old index continues to serve queries. | Offline reindexing was the main cause of DataHub upgrade failures. | D |
 | OP-4 | mudcat shall commit catalog rows for a registration before it reports the registration as complete. | Producers must not delete a staging copy that the catalog does not record. | T |
 | OP-5 | mudcat shall accept a repeated registration of the same data object and checksum without a duplicate entry. | Batch jobs retry. | T |
+| OP-6 | mudcat shall seal unsealed member rows into manifest files without a change to the members or the Merkle hash of any snapshot. | Maintenance must not change what a snapshot contains. | T |
 
 ## Performance and scale
 
