@@ -19,7 +19,7 @@ Status: sketch. This document describes the components, where state lives and th
 
 | Plane | Holds | Technology | Source of truth? |
 |---|---|---|---|
-| Catalog database | Zones, collections, data objects, versions, replicas, storage resources, datasets, snapshots, sources, policies, specifications, activities and their qualified relations, ACLs | PostgreSQL | Yes |
+| Catalog database | Zones, collections, artifacts, versions, replicas, storage resources, datasets, snapshots, sources, policies, specifications, activities and their qualified relations, ACLs | PostgreSQL | Yes |
 | Manifests and run records | Element lists, annotation sets, run-record bundles | Parquet or Lance files in object storage, each registered as a version | Yes, and immutable |
 | Derived indexes | Full-text and faceted search, vector search, content-identity index, similarity tables, effective-policy cache | PostgreSQL full-text search and pgvector by default; OpenSearch and columnar index files optionally | No; rebuildable |
 | Data | The bytes | Object storage, HPC file systems, tape | Outside mudcat |
@@ -121,7 +121,7 @@ Queries compile to SQL against the catalog database. Lineage operators use recur
 
 All writes from bulk clients and site agents go through a queue to a batched writer. This writer commits in large transactions. Before the Butler adopted this pattern, it measured inserts from hundreds of concurrent workers that took up to ten minutes.
 
-- **Idempotency:** the key for registration is (data object, content checksum), so retries are harmless.
+- **Idempotency:** the key for registration is (artifact, content checksum), so retries are harmless.
 - **Ordering:** registration commits catalog rows before a producer may delete its staged copy. This avoids the Butler's orphaned-file problem in reverse.
 
 Interactive single writes bypass the queue but use the same transaction code.
@@ -489,7 +489,7 @@ mudcat treats this as federation with a shared namespace. It splits authority by
 
 | State | Authority | Other zones |
 |---|---|---|
-| Definition of the logical dataset: data objects, published snapshots, corrections to metadata and reference data | The **producing zone** for each part. A part processed at a site is owned by that site's zone | Subscribe to it, and hold read-only copies of the descriptions |
+| Definition of the logical dataset: artifacts, published snapshots, corrections to metadata and reference data | The **producing zone** for each part. A part processed at a site is owned by that site's zone | Subscribe to it, and hold read-only copies of the descriptions |
 | A release that combines parts produced at several sites | A **release snapshot** that lists the member snapshots from each producing zone, with their Merkle hashes. Each producer signs its members, and the release is co-signed | Verify it from the hashes alone |
 | Replicas, replica state and completeness on a site's storage | The **custodian zone** that owns that storage | Receive completeness records, which together give the global answer to "where are the copies" |
 | Access decisions for a site's users and copies | The **custodian zone** | — |
@@ -498,7 +498,7 @@ mudcat treats this as federation with a shared namespace. It splits authority by
 
 Three mechanisms make this work without shared mutable state:
 
-- **Identifiers of the producer.** A zone that registers a replica of a version that another zone produced uses the UUIDv7 identifier that the producing zone minted. Registration is idempotent on (data object, content checksum), so independent registrations of the same content converge. The Butler reaches the same goal with deterministic UUIDs. mudcat reaches it because it carries the identifier of the producer.
+- **Identifiers of the producer.** A zone that registers a replica of a version that another zone produced uses the UUIDv7 identifier that the producing zone minted. Registration is idempotent on (artifact, content checksum), so independent registrations of the same content converge. The Butler reaches the same goal with deterministic UUIDs. mudcat reaches it because it carries the identifier of the producer.
 - **Verifiable snapshot hashes.** Each snapshot carries a Merkle hash that anyone can verify. Thus anyone who holds the hashes can verify a release of parts that different zones own. No zone has to trust another zone's database.
 - **The federation feed.** Corrections and tombstones flow from producers, and completeness flows from custodians, as signed events. A failure to apply one is visible, because each custodian publishes the snapshot hashes that it holds completely.
 
@@ -583,7 +583,7 @@ A single PostgreSQL primary is a single-region write dependency. Multi-region de
 
 ## Build order
 
-1. **Core catalog.** Namespace, data objects, versions, replicas, structure descriptors with the CSVW model, typed metadata and the query language. This step also includes bulk ingest, the Python SDK and CLI, and an importer from current Datacat databases.
+1. **Core catalog.** Namespace, artifacts, versions, replicas, structure descriptors with the CSVW model, typed metadata and the query language. This step also includes bulk ingest, the Python SDK and CLI, and an importer from current Datacat databases.
 2. **Snapshots and provenance.** Datasets, snapshots, annotation sets, PROV relations, the run context, OpenLineage and MLflow ingest, and the change log.
 3. **Specifications and policy.** Sources, usage grants and duties, the terms compiler and pinning. This step also includes the authorization port with the built-in adapter, resolved manifests and credentials, and data loader integrations. SpiceDB and OpenFGA adapters follow after the conformance suite exists.
 4. **Identity and evaluation.** The content-identity index (exact checksums first), similarity criteria, leakage assertions, and the deletion workflow.

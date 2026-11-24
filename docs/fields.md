@@ -60,6 +60,7 @@ Other schema languages follow the same pattern: the CF conventions, AnnData obs 
 
 ## High-energy physics and grid computing
 
+- **Synonyms:** an artifact is a logical file (LFN) or a Rucio file DID; an element is an event; a representation is a data tier (RAW, AOD, NanoAOD); an annotation set is a ROOT friend tree; a manifest is like a CMS block; a pinned specification is like a SAM snapshot.
 - **Formats:** ROOT files and trees (format plugin library: uproot); HDF5.
 - **Reference data:** runs, run ranges, data-quality flags, calibrations, detector conditions.
 - **Query examples:** Datacat's query language came from this field, for example `run > 6200 and quality =~ "GO*"` over path globs such as `/raw/**`.
@@ -102,6 +103,8 @@ Other schema languages follow the same pattern: the CF conventions, AnnData obs 
 
 ## Genomics and medicine
 
+- **Synonyms:** an artifact is a GA4GH DRS object; elements are reads, cells or variants; a dataset snapshot is like a Human Cell Atlas bundle. In SRA and ENA, a "run" is data, not an activity.
+- **Purposes:** the GA4GH Data Use Ontology (DUO) gives the purpose codes for usage grants on controlled-access human data.
 - **Formats:** FASTQ, BAM, CRAM, VCF; AnnData for single-cell data; DICOM for medical images.
 - **Access:** GA4GH DRS for object access; GA4GH Passports and Visas for controlled access; htsget for streaming reads.
 - **Policy conventions:**

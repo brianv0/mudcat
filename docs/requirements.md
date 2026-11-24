@@ -162,7 +162,7 @@ Identifier prefixes:
 | OP-2 | mudcat shall rebuild each derived index from the catalog database and the registered manifests. | No state may exist only in a derived index; DataHub's recovery problems show the risk. | D |
 | OP-3 | mudcat shall rebuild a derived index while the old index continues to serve queries. | Offline reindexing was the main cause of DataHub upgrade failures. | D |
 | OP-4 | mudcat shall commit catalog rows for a registration before it reports the registration as complete. | Producers must not delete a staging copy that the catalog does not record. | T |
-| OP-5 | mudcat shall accept a repeated registration of the same data object and checksum without a duplicate entry. | Batch jobs retry. | T |
+| OP-5 | mudcat shall accept a repeated registration of the same artifact and checksum without a duplicate entry. | Batch jobs retry. | T |
 | OP-6 | mudcat shall seal unsealed member rows into manifest files without a change to the members or the Merkle hash of any snapshot. | Maintenance must not change what a snapshot contains. | T |
 | OP-7 | mudcat shall run the same release as a hosted service and as a self-hosted installation. | Customers must be able to move between hosted and self-hosted operation. | I |
 | OP-8 | mudcat shall keep the catalog of each zone in a database or schema that holds no other tenant's data. | Tenant isolation, recovery and deletion are simpler and safer per zone. | I |
