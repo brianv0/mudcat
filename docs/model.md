@@ -244,8 +244,30 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
   - version;
   - replica (physical facts only);
   - element, through annotation sets (section 4).
-- **Assertion origin.** Each value records if a person asserted it, a plugin extracted it, or a model inferred it (`mc:assertedBy`). Where relevant, it also records a confidence. Agent-extracted metadata is now common, and consumers need to tell it apart.
+- **Assertion origin.** Each value records if a person asserted it, an augmenter computed it, or a model inferred it (`mc:assertedBy`), with the version of the augmenter or model. Where relevant, it also records a confidence. Agent-extracted metadata is now common, and consumers need to tell it apart.
 - **Reference data.** Reference tables, for example of instruments, campaigns or partners, are ordinary record datasets. Attributes link to them through `csvw:valueUrl` and foreign keys, and queries can join through them. This is a general form of Datacat's foreign metadata, the Butler's dimension records and MetaCat's external filters.
+
+### Tags
+
+A **tag** (`mc:Tag`) is an attribute definition that classifies, with a closed list of permitted values, in a namespace that has an owner. Examples are a sensitivity class or a data domain. Snowflake object tags work in the same way. Tags differ from other attributes in three ways:
+
+- **Inheritance.** A tag on a collection applies to everything under it, unless a lower level sets another value.
+- **Propagation.** The owner of a tag can mark it to propagate along `prov:wasDerivedFrom`, as duties do. A derived entity then carries the tag of its inputs. Conflicts are flagged.
+- **Policy.** Custody levels, default duties and access conditions can attach to a tag value, instead of to each attribute or object. Thus classification of an entity applies the policy.
+
+### Augmenters
+
+An **augmenter** (`mc:Augmenter`) is a registered, versioned plugin that computes metadata. Format plugins are one kind of augmenter. Others compute classifications, quality metrics, fingerprints, embeddings or AI-generated descriptions. Snowflake has the same kinds of function: automatic classification into system tags, data metric functions on a schedule, and generated descriptions.
+
+Each augmenter declares:
+
+- **Inputs:** the entity classes, structure kinds or tags that it applies to, and if it needs the bytes or only the metadata.
+- **Outputs:** the attributes, tags or annotation sets that it writes. All of them are in a namespace that the augmenter owns. Thus two augmenters cannot write the same attribute.
+- **Trigger:** registration, a change in the change log, a schedule, or a request.
+- **Place of execution:** next to the data (in a site agent), in the control plane (metadata only), or in the customer gateway (customer-held metadata). Augmenters from a third party run only next to the data or in the customer gateway, under the customer's grants. Snowflake native apps also run inside the consumer's account.
+- **Review:** if a person must accept the output before it becomes visible.
+
+Each output value records the augmenter and its version as its assertion origin. An output that needs review has the status `proposed` until a person accepts or rejects it. AI-generated descriptions need review by default. When an augmenter gets a new version, mudcat can compute its outputs again in the background. The old outputs stay until the new ones are complete, as with a rebuild of a derived index.
 
 ## 4. Datasets, snapshots and representations
 

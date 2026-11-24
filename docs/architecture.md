@@ -140,7 +140,7 @@ mudcat produces RDF from this schema through a declared mapping and the JSON-LD 
 
 ### Format plugins and site agents
 
-**Format plugins** read a version's header or index and produce:
+**Format plugins** are augmenters (model, section 3) that read the bytes. They read a version's header or index and produce:
 
 - a structure descriptor;
 - extracted metadata;
@@ -162,6 +162,24 @@ Agent tasks:
 - **Data compaction and rewrites,** when the maintenance section below assigns them to the site.
 
 Agents report results through the ingest writer.
+
+### Augmenter runtime
+
+Augmenters run where their inputs are:
+
+| Place | Runs | Isolation |
+|---|---|---|
+| Site agent | Augmenters that read bytes: format plugins, fingerprints, embeddings, classifiers that read content | A sandbox (container or WebAssembly) with read access only to the leased objects, and no network access except to the catalog |
+| Control plane worker | Augmenters that read only metadata: rule-based classification, tag propagation, metrics over metadata | First-party augmenters only |
+| Customer gateway | Augmenters that read customer-held metadata | Like a site agent |
+
+The runtime:
+
+- **Scheduling.** The runtime gets work from the change log, from schedules and from requests. Each run is a leased task, so a failed run goes back to the queue.
+- **Writes.** Augmenters write their outputs through the ingest writer, into their own namespaces.
+- **Review.** Outputs that need review go into a review queue in the web UI, with their status `proposed`.
+- **Recomputation.** A new augmenter version starts a background recomputation of its outputs. The old outputs stay visible until the new ones are complete.
+- **Costs.** Each run records its compute time, so that the vendor of a hosted service can charge for augmentation separately.
 
 ### Resolver
 

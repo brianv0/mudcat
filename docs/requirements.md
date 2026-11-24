@@ -67,6 +67,11 @@ Identifier prefixes:
 | ST-10 | mudcat shall store values of a customer-held attribute only in the customer's environment. | Some metadata, such as consent status, must not leave the customer's environment. | I |
 | ST-11 | mudcat shall evaluate query predicates on customer-held attributes only through the customer gateway. | The control plane must give correct results without access to the values. | T |
 | ST-12 | mudcat shall record a policy decision that depends on customer-held attributes without the values of those attributes. | Audit needs the decision, but the values must stay with the customer. | T |
+| ST-13 | mudcat shall let an augmenter write only attributes, tags and annotation sets in namespaces that the augmenter owns. | Two plugins must not overwrite each other's metadata. | T |
+| ST-14 | mudcat shall record the augmenter and its version with each value that an augmenter writes. | Users must tell computed metadata from asserted metadata, and find values that an old plugin version computed. | T |
+| ST-15 | mudcat shall hide an augmenter output that needs review until a person accepts it. | AI-generated descriptions and classifications can be wrong. | T |
+| ST-16 | mudcat shall run augmenters from third parties only in site agents or in the customer gateway. | Third-party code must not run in the control plane, and must run under the customer's grants. | I |
+| ST-17 | mudcat shall apply a tag on a collection to each entity under it that does not set another value of that tag. | Classification of a whole collection must not need a write to each object. | T |
 
 ## Provenance
 
