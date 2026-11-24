@@ -63,6 +63,10 @@ Identifier prefixes:
 | ST-6 | mudcat shall validate metadata against the metadata schemas that apply to the entity. | iRODS attribute–value–unit metadata has no types and no schemas; sites built their own conventions to compensate. | T |
 | ST-7 | mudcat shall record for each metadata value if a person, a format plugin or a model asserted it. | Metadata that agents extract is now common, and users must be able to tell it apart. | T |
 | ST-8 | mudcat shall give each field an identifier that does not change when the field gets a new name. | Schema evolution and annotation sets must not break when a column gets a new name; Iceberg uses field IDs for the same reason. | T |
+| ST-9 | mudcat shall reject a write to an attribute namespace from a principal that the namespace owner did not name. | Customer systems such as laboratory systems must stay the only writers of their metadata. | T |
+| ST-10 | mudcat shall store values of a customer-held attribute only in the customer's environment. | Some metadata, such as consent status, must not leave the customer's environment. | I |
+| ST-11 | mudcat shall evaluate query predicates on customer-held attributes only through the customer gateway. | The control plane must give correct results without access to the values. | T |
+| ST-12 | mudcat shall record a policy decision that depends on customer-held attributes without the values of those attributes. | Audit needs the decision, but the values must stay with the customer. | T |
 
 ## Provenance
 

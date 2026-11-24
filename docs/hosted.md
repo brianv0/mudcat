@@ -12,7 +12,7 @@ mudcat is already outside the read path, so it splits well into two planes:
 | Plane | Components |
 |---|---|
 | Control plane (vendor) | API gateway, catalog API, query compiler, resolver, policy engine, pinning service, authorization port, ingest writer, catalog database, background workers, gateways, hosted MCP server, web UI |
-| Data plane (customer) | Site agents, format plugins, movers, compaction compute, and optionally a credential broker |
+| Data plane (customer) | Site agents, format plugins, movers, compaction compute, and optionally a customer gateway with a metadata store |
 
 Format plugins run inside site agents. Thus extraction, fingerprinting and checksum verification happen next to the data, and only their results go to the control plane.
 
@@ -40,7 +40,11 @@ vendor: Vendor control plane (one region) {
 
 customer: Customer data plane {
   agents: "Site agents\nformat plugins · verification · inventory · deletion"
-  broker: "Credential broker (optional)\nissues credentials inside the customer account"
+  broker: "Customer gateway (optional)\ncredentials · customer-held metadata · keys"
+  metastore: "Customer metadata store" {
+    shape: cylinder
+  }
+  broker -> metastore
   storage: "Storage\nbuckets · HPC file systems · enclaves"
   movers: "Movers\nFTS3 · Globus · rclone · cloud replication"
   agents -> storage
@@ -52,6 +56,7 @@ customer: Customer data plane {
 users -> vendor.front
 vendor.workers -> customer.agents: tasks (agents connect out)
 users -> customer.storage: direct reads
+vendor.services -> customer.broker: split queries · policy checks (gateway connects out)
 ```
 
 ## Connections
@@ -94,6 +99,56 @@ A database for each zone has these advantages over rows of several tenants in on
 - **Limits:** a tenant's rows cannot appear in another tenant's queries, even if the application has an error.
 
 Very small zones can share a database, with one schema for each zone. Larger tenants move to their own database without a change to the application.
+
+## Metadata that the customer controls
+
+"Control" can mean two different things, and mudcat handles them in different ways:
+
+- **Authority.** A customer system, for example a laboratory information system or an electronic notebook, is the only writer of some metadata. The vendor may store a copy.
+- **Custody.** Some metadata must not leave the customer's environment at all, for example consent status, patient attributes, proprietary structures or confidential file names.
+
+### Authority: namespaces that only the customer writes
+
+Attribute definitions belong to namespaces (model, section 3). A customer can own a namespace and name the only principals that can write attributes in it, for example the service account of its laboratory system. mudcat then rejects writes to that namespace from any other principal, its own background workers included. The assertion origin of each value records the customer system as the writer.
+
+### Custody: three levels for each attribute
+
+Each attribute definition has a **custody level**. The custody level sets where mudcat stores the values, and what the control plane can do with them.
+
+| Custody level | Where values are | What the control plane can do |
+|---|---|---|
+| **Vendor-held** | The zone's database in the control plane | Everything: queries, sorts, facets, policy evaluation |
+| **Customer-encrypted** | The control plane stores ciphertext. Only the customer holds the key | Equality queries through a **blind index**: a keyed hash of each value, which the customer gateway computes. No range queries, sorts or full-text search. The control plane cannot read the values |
+| **Customer-held** | A metadata store in the customer's data plane, behind the customer gateway | Nothing directly. The control plane stores only the fact that the attribute exists for an entity |
+
+The same levels apply to annotation sets and manifests: they can stay in a bucket in the customer's account.
+
+Blind indexes show which entities have equal values. Customers must accept this for each attribute that they put at the customer-encrypted level. Values that are rare enough to identify a person need the customer-held level.
+
+### The customer gateway
+
+The credential broker grows into a **customer gateway** in the data plane, with two jobs:
+
+1. It issues storage credentials (credential-broker mode).
+2. It serves customer-held and customer-encrypted metadata.
+
+The gateway runs next to the customer's metadata store, and holds the customer's keys. Like a site agent, the gateway opens its own outbound connection to the control plane, and the control plane sends its requests over that connection. Thus the customer still opens no inbound port.
+
+### How queries, the UI and policy work with customer-held metadata
+
+- **Queries.** The query compiler splits a query in two:
+  - the control plane evaluates the predicates on vendor-held attributes;
+  - the customer gateway evaluates the predicates on customer-held attributes and returns the matching identifiers.
+
+  The control plane then joins the two results by identifier. The gateway never returns values, only identifiers. For customer-encrypted attributes, the gateway computes the blind-index value of the query literal, and the control plane matches it.
+- **The web UI.** The browser gets customer-held values directly from the customer gateway, with the user's own token, and shows them next to the rest of the page. The values never pass through the vendor.
+- **Usage policy.** Some policy decisions depend on customer-held values, for example consent status at pinning. For these, the pinning service sends the identifiers and the condition to the customer gateway. The gateway returns the decision and a signature. mudcat records the decision and the signature in the policy decision of the pinned specification, but not the values.
+- **Search indexes.** The control plane's search and vector indexes contain only vendor-held attributes. A customer can run an index of its own behind the gateway. The query compiler then sends text predicates on customer-held fields to it.
+- **Availability.** If the customer gateway is not available, mudcat rejects queries and pinnings that need customer-held metadata. Queries that do not need it continue to work.
+
+### Federation as an alternative
+
+A customer that wants to hold much of its metadata can run a small self-hosted zone for it, and federate it with its hosted zones. This uses the normal federation rules: each zone makes the decisions about the data that it owns. Custody levels are better when only a few attributes are sensitive. A federated zone is better when whole datasets are sensitive.
 
 ## Regions and residency
 

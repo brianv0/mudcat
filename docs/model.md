@@ -233,7 +233,7 @@ An **element** is an addressable part of a version. A **selector** (`mc:Selector
 
 Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's typed values. Each attribute is a field.
 
-- **Attribute definitions** (`mc:AttributeDefinition`, subclass of `mc:Field`) are registered in a namespace. Each definition gives its attribute a name, datatype, unit, semantic annotation, description and optional permitted values. An AVU becomes the triple (attribute definition IRI, typed literal, unit IRI).
+- **Attribute definitions** (`mc:AttributeDefinition`, subclass of `mc:Field`) are registered in a namespace. Each definition gives its attribute a name, datatype, unit, semantic annotation, description and optional permitted values. An AVU becomes the triple (attribute definition IRI, typed literal, unit IRI). Each definition also has a **custody level**: vendor-held, customer-encrypted or customer-held. The custody level sets where values are stored in a hosted deployment, and which queries can use them (see [hosted.md](hosted.md)). A namespace can have an owner that is the only principal that can write attributes in it.
 - **Undeclared attributes:** the catalog accepts them, stores them and can search them. But it marks them as undeclared, and it does not use them for range queries or sorts until someone declares them.
 - **Metadata schemas** (`mc:MetadataSchema`) group attribute definitions. They tell which entity classes they apply to, and which attributes are necessary.
   - mudcat generates validation shapes from them: SHACL for RDF consumers and JSON Schema for clients.
