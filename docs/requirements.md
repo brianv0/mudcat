@@ -116,6 +116,7 @@ Identifier prefixes:
 | UP-12 | mudcat shall apply the access control, usage policy and invalidation set that are in effect now to each as-of resolution. | Time travel must not give back access that a takedown or revocation removed. | T |
 | UP-13 | mudcat shall keep the transaction-time history of refs, aliases, ACLs, grants, replica states and lifecycle status. | Old scripts and audits must resolve names and decisions as they were. | T |
 | UP-14 | mudcat shall return an error that states the expiry when an as-of resolution needs an expired snapshot. | A silent resolution to another snapshot would break reproducibility. | T |
+| UP-15 | mudcat shall accept a manifest at pinning without a check of each element only if every source that the manifest uses permits the requested action and purpose, and no entry is in the invalidation set. | A check of each element is too slow at 10^11 elements, but a shortcut must not let excluded data through. | T |
 
 ## Data access and resolution
 
@@ -126,6 +127,9 @@ Identifier prefixes:
 | RD-3 | mudcat shall issue credentials scoped to a prefix only if the prefix is completely inside one ACL root that the caller can read. | Credentials scoped to a prefix give access to everything under that prefix. | T |
 | RD-4 | mudcat shall select the replica for a read from the verified replicas that the jurisdiction and egress rules of their storage resources permit. | Data must not leave a place where law or contract keeps it. | T |
 | RD-5 | When a zone uses the credential-broker mode, mudcat shall issue storage credentials only through a broker that runs in the customer's environment. | Regulated customers of a hosted service must keep the vendor without access to their bytes. | T |
+| RD-6 | mudcat shall skip a manifest or a file during planning only if its statistics prove that no element inside it matches the request. | Statistics must make plans faster without a change to their results. | T |
+| RD-7 | mudcat shall return, with each task of a resolution plan, the expected bytes, the expected number of elements and the replica location. | Compute engines need these values to size and place their tasks. | T |
+| RD-8 | mudcat shall provide read and write connectors for Ray Data that pass the run token of the job. | Lineage must come from the jobs that use the data, without extra code in each job. | D |
 
 ## Placement and federation
 

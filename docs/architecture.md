@@ -193,6 +193,38 @@ The resolver serves reads, but it is not in the data path:
 - **Resolution in parts.** A large pinned specification can resolve to billions of elements. In this case, the resolver plans the resolution, as the server-side scan planning of the Iceberg REST catalog does. It returns a plan identifier and a list of parts. Workers then get the parts in parallel. Each part is a manifest file with its credentials.
 - **Observed capture.** The resolver logs the credentials that it issues under a run token. These logs give the `observed` usage relations.
 
+### Planning with statistics
+
+The resolver uses statistics (model, section 4) to plan work for a compute engine. A plan for a large resolution has these steps:
+
+1. **Prune snapshots and manifests.** The planner compares the predicates of the request with snapshot statistics and manifest summaries, and skips every manifest that cannot match.
+2. **Check policy by manifest.** The source bitmap of a manifest shows which sources its entries use. If every source of a manifest permits the requested action and purpose, the pinning service accepts the whole manifest without a check of each element. It checks single elements only in manifests that mix permitted and other sources, or that the invalidation set can touch. The fingerprint filters of a manifest show if a takedown can touch it.
+3. **Prune files.** Inside the remaining manifests, the planner compares the predicates with file statistics: time spans, coordinate extents, tag sets, bounds.
+4. **Size the tasks.** The planner groups the remaining elements into read tasks of about equal cost. It uses bytes, element counts and measured decode cost, not file counts. This prevents a few large or slow files from holding up the job.
+5. **Place the tasks.** Each task gets the storage resource of its best replica, and the hints of its data: compute location, hardware, cache class. Engines turn these into scheduling constraints.
+6. **Order the tasks.** For tape and other slow storage, the planner orders tasks by tape and position, and asks site agents to stage files in batches.
+
+The plan returns each task with its expected size, row count and cost. Engines such as Ray use these estimates for their own planning.
+
+Other uses of statistics:
+
+- **Mixtures without scans.** Counts per source and per tag value in snapshot statistics give exact component sizes. Thus the pinning service can turn the weights of a specification into sample rates without a scan.
+- **Stratified sampling and curricula.** Quantile sketches and manifest bounds let the planner select shards by score or difficulty, and order them for a curriculum.
+- **Incremental work.** The change summary between two snapshots, with manifest-level summaries, lets an augmenter process only the members that a new snapshot added.
+- **Contamination and takedown checks.** Fingerprint filters in manifest summaries let mudcat test a fingerprint against a whole zone, and scan only the manifests that can contain it.
+- **Vector routing.** Embedding centroids in manifest summaries let a similarity search open only the shards near the query vector.
+- **Estimates.** Sketches give the estimated counts of the REST interface and the facet counts of the web UI.
+
+### Compute-engine integration
+
+mudcat gives compute engines a read connector and a write connector. Ray Data is the first target:
+
+- **Read connector.** A Ray `Datasource` turns each task of a resolution plan into a Ray read task. It has readers for each structure kind: byte range, member, row range, hyperslab and time span. It passes the size and row estimates of each task to Ray, and the placement constraints as node labels. It refreshes credentials during long jobs, and it carries the run token, so that mudcat records the observed lineage.
+- **Write connector.** A Ray `Datasink` registers outputs through bulk registration. Registration is idempotent (OP-5), because Ray retries failed tasks. Outputs become versions, representations or annotation sets, with the run as their generating activity.
+- **Feedback.** The connectors report measured decode times and unreadable files, which become statistics (model, section 4).
+
+The same connectors are the model for Spark, Daft and PyTorch data loaders.
+
 ### Policy engine and pinning service
 
 There are five enforcement points: **registration**, **pinning**, **materialisation**, **export** and **deletion**. Everything else happens asynchronously from the change log. This follows the idea of the iRODS policy enforcement point, but without a general rule language in the request path.

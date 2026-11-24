@@ -313,6 +313,34 @@ mudcat does not make a snapshot for each change to a collection, for two reasons
 
 **Selection** (`mc:Selection`). A no-copy subset of one or more snapshots. A predicate or an explicit list of elements defines it. It also has the hash of the resolved element list.
 
+### Statistics
+
+**Statistics** (`mc:Statistics`) are metadata that exist to make execution cheaper: pruning, sizing, placement and sampling. Iceberg keeps per-file column bounds in its manifests, partition summaries in its manifest lists, and table-level sketches in Puffin files. Parquet keeps row-group bounds, page indexes and Bloom filters inside each file. mudcat keeps statistics at four levels, so that a planner can stop at the highest level that answers its question:
+
+| Level | Examples | Where mudcat keeps them |
+|---|---|---|
+| Element | Size, duration, decode cost, label counts, quality score | Columns of the manifest |
+| Version (one file or object) | Bounds of promoted attributes; time span; spatial or coordinate extent of an array; set of sources; set of tag values; row and element counts; codec and resolution; measured decode time | Attributes in the `stats` namespace of the version |
+| Manifest | Bounds and counts over its entries; a Bloom or xor filter of element fingerprints and identifiers; a bitmap of the sources and tag values that its entries use; the centroid of its embeddings | A summary next to each manifest, as in an Iceberg manifest list |
+| Snapshot | Distinct-value sketches, quantile sketches and histograms of promoted attributes; counts per source and per tag value | A statistics file that the snapshot refers to. The Puffin format of Iceberg is a candidate |
+
+Four rules keep statistics safe to use:
+
+- **Bounds are conservative.** A bound must contain every value. A filter can give false positives, but never false negatives. Thus a planner can skip a file or a manifest only when its statistics prove that nothing inside can match.
+- **Statistics never go stale.** They describe immutable versions, manifests and snapshots, so they do not change. Mutable state, such as which replicas are available now, is not a statistic.
+- **Statistics are derived.** Augmenters compute them at registration, at manifest sealing and at publication. Each statistic records its kind and the version of the augmenter that computed it, so mudcat can compute it again when an augmenter changes.
+- **Statistics can come from execution.** Engines can report what they observed, for example the real decode time of a file or a file that could not be read. An augmenter records these observations as statistics, so the next plan is better. A file that could not be read gets a `suspect` state for review.
+
+**Hints** (`mc:Hint`) are statistics that a person or a policy sets on a collection, a dataset or a tag value, not values that mudcat computes. Examples:
+
+- the expected access pattern (sequential or random);
+- the layout (sort order, chunk shape) that writers must use;
+- a compute location that the data needs (for example, a region for data with a residency tag);
+- the need for special hardware (for example, video decoders on GPUs);
+- a cache class (keep on local NVMe during training).
+
+Hints inherit down collections, as tags do.
+
 ## 5. Sources, access control and usage policy
 
 ### Sources
