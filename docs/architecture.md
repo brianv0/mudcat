@@ -29,28 +29,28 @@ No class of state may exist only in a derived index. DataHub keeps time-series a
 ## Components
 
 ```d2
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
 direction: down
 
-clients: Clients {
-  sdk: Python SDK
-  cli: CLI
-  ui: Web UI
-  loaders: Data loaders
-  notebooks: Notebooks
-  agents: Agents (MCP)
-}
+clients: "Clients\nPython SDK · CLI · web UI · data loaders · notebooks · agents (MCP)"
 
 zone: mudcat zone {
-  gateway: "API gateway\n(OIDC, tokens)"
+  gateway: "API gateway (OIDC, tokens)"
+  gateways: "Gateways\nIceberg REST · DCAT, Croissant, RO-Crate export · MCP server\nfsspec · federation feed · field gateways (fields.md)"
 
   services: Services {
+    grid-columns: 4
     api: Catalog API
     query: Query compiler
     resolver: Resolver
     policy: Policy engine
-    pinning: Pinning service
-    authz: Authorization port
     ingest: "Ingest writer\n(batched)"
+    pinning: Pinning service
+    authz: "Authorization port\n(built-in, or SpiceDB · OpenFGA)"
   }
 
   db: "PostgreSQL catalog\nentities · relations · ACLs · policies · outbox" {
@@ -58,66 +58,29 @@ zone: mudcat zone {
   }
 
   consumers: Change-log consumers {
+    grid-columns: 4
     index: "Index builders\nsearch · vector · identity"
     lineage: "Lineage ingest\nOpenLineage · MLflow · …"
     placement: Placement reconciler
     deletion: Deletion workflow
   }
 
-  gateways: Gateways {
-    iceberg: Iceberg REST
-    export: "Export\nDCAT · Croissant · RO-Crate"
-    mcp: MCP server
-    fsspec: fsspec
-    federation: Federation feed
-    field: "Field gateways\n(fields.md)"
-  }
-
-  gateway -> services.api
-  gateways -> services.api
-  services.api -> services.query
-  services.api -> services.resolver
-  services.api -> services.ingest
-  services.resolver -> services.policy
-  services.policy -> services.pinning
-  services.policy -> services.authz
-  services.query -> db
-  services.resolver -> db
-  services.pinning -> db
-  services.ingest -> db
+  gateway -> services
+  gateways -> services
+  services -> db
   db -> consumers: change log (CloudEvents)
 }
 
-authz_service: "External authorization service\nSpiceDB · OpenFGA (optional)" {
-  style.stroke-dash: 3
-}
+agents: "Site agents (one or more per storage resource)\nextract · fingerprint · verify · inventory · delete with receipts · invoke movers"
 
-site_agents: "Site agents (one or more per storage resource)\nextract · fingerprint · verify · inventory\ndelete with receipts · invoke movers"
-
-movers: Movers {
-  fts: FTS3
-  globus: Globus
-  rclone: rclone
-  cloud: Cloud replication
-  pelican: Pelican
-}
-
-storage: Storage {
-  buckets: Buckets
-  hpc: HPC file systems
-  tape: Tape
-  enclaves: Enclaves
-}
+storage: "Storage\nbuckets · HPC file systems · tape · enclaves\nclients read it directly, with issued credentials"
+movers: "Movers\nFTS3 · Globus · rclone · cloud replication · Pelican"
 
 clients -> zone.gateway
-zone.services.authz -> authz_service: optional
-zone.consumers.placement -> site_agents: tasks
-zone.consumers.deletion -> site_agents: tasks
-site_agents -> zone.services.ingest: results
-site_agents -> storage
-site_agents -> movers
+zone.consumers -> agents: tasks
+agents -> movers
+agents -> storage
 movers -> storage
-clients.loaders -> storage: direct reads with issued credentials
 ```
 
 ### Catalog API

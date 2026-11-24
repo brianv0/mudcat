@@ -49,8 +49,15 @@ Versions, snapshots, pinned specifications, policy decisions and provenance reco
 
 ## Entity overview
 
+Data, datasets and sources:
+
 ```d2
-direction: down
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+direction: right
 
 Zone -> Collection: mints
 Collection -> Collection: contains
@@ -66,12 +73,25 @@ Ref -> Snapshot: points to
 Snapshot -> Version: hadMember
 Snapshot -> AnnotationSet: hadMember
 Representation -> Snapshot: materializedFrom
+```
+
+Training and evaluation:
+
+```d2
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+direction: right
+
 Specification -> PinnedSpecification: pinned as
 PinnedSpecification -> Representation: materialised as
-"Training run" -> PinnedSpecification: used (role training)
-Model -> "Training run": wasGeneratedBy
-Evaluation -> Model: used
-EvaluationResult -> Evaluation: wasGeneratedBy
+PinnedSpecification -> "Training run": used by (role training)
+"Training run" -> Model: generated
+Model -> Evaluation: used by
+EvaluationSuite -> Evaluation: used by
+Evaluation -> EvaluationResult: generated
 ```
 
 ## 1. Namespace and storage
