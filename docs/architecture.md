@@ -114,7 +114,29 @@ It adds:
 - lineage operators: `ancestors()`, `descendants()`, `derived_from(<query>)`, `used_in(<model>, role=training)`;
 - policy predicates: `permitted(train, purpose=commercial)`.
 
-Queries compile to SQL against the catalog database. Lineage operators use recursive queries over relation tables. By default, they exclude ubiquitous roles. The query compiler pushes element-level predicates down to manifest scans. A query engine such as DuckDB, DataFusion or Trino runs these scans, not PostgreSQL.
+Queries compile to SQL against the catalog database. Lineage operators and policy predicates need special care, because a simple implementation is slow. The next two sections tell how mudcat keeps them fast. The query compiler pushes element-level predicates down to manifest scans. A query engine such as DuckDB, DataFusion or Trino runs these scans, not PostgreSQL.
+
+### Performance of lineage operators
+
+A recursive query over all provenance relations does not scale. mudcat uses these measures:
+
+- **Traversal at the level of snapshots and activities.** The graph that the operators walk contains datasets, snapshots, artifacts with their own lineage, models and activities. It has millions of relations, not billions. Lineage of single files and elements stays in run records and manifests. mudcat joins it only after the traversal made the set small.
+- **Short fixed paths are joins, not traversals.** `used_in(<model>, role=training)` goes from the model to the activity that generated it, to its resolution, to the inputs. This is a join of fixed depth.
+- **Limits.** Each traversal has a default depth and a limit on the number of nodes. It excludes ubiquitous roles by default. A query that passes a limit returns an error that states the limit. It does not return a partial result as if it were complete.
+- **The smaller side first.** For `derived_from(<query>)`, the planner estimates the size of both sides. It starts from the results of the inner query and goes down, or from the candidates and goes up, and uses the smaller start set.
+- **A lineage summary for common questions.** Each entity keeps its root sources and the activity that produced it as indexed columns. A background worker updates them from the change stream. "Everything that comes from source X" is then an index lookup, not a traversal. The summary is a derived index.
+- **Ancestor table where it is small enough.** For datasets and snapshots, a background worker also keeps a table of all (ancestor, descendant) pairs. mudcat does not keep this table for artifacts and versions, where it would grow too large.
+- **Long traversals run as jobs.** A traversal that cannot finish in the time limit of a request runs as a background job, and the client gets the result later.
+
+### Performance of policy predicates
+
+`permitted(train, purpose=commercial)` must not evaluate usage policy for each row. mudcat uses these measures:
+
+- **Policy is on sources, and sources are few.** The table of usage grants has one row for each (source, action, purpose). For an artifact or a version, the predicate is a join from its source to this small table.
+- **Effective policy for sets.** For a snapshot or a dataset, the answer needs every source of every member. The effective-policy cache keeps, for each snapshot, the set of (action, purpose) pairs that all its sources permit. The predicate is then a lookup. Counts per source in snapshot statistics give the sources of a snapshot without a scan of its members.
+- **Updates by source.** When the grants of a source change, a background worker computes the cache again only for the snapshots that use that source.
+- **Time limits are evaluated at query time.** The cache keeps the earliest expiry date of the grants that it used. The predicate compares this date with the time of the query. Thus an expired licence takes effect at once, without an update of the cache.
+- **The decision at resolution is always exact.** The predicate in a query is a filter for discovery. The policy engine evaluates policy again, completely, when a job resolves data.
 
 ### Ingest writer
 
@@ -131,11 +153,32 @@ The catalog database is PostgreSQL with one schema per model area: namespace and
 
 - **IDs and identifiers:** UUIDv7 primary keys (IDs) for every entity, versions and snapshots included. They keep index locality for time-ordered inserts (the Butler also made this change). The embedded timestamp is not a privacy risk, because the access model controls who can see an ID. A separate table holds identifiers (paths, DOIs, names in other systems), with a unique index per scheme.
 - **Paths:** the catalog stores paths as materialised paths in `ltree`, so it evaluates path globs and ACL inheritance in SQL. This removes Datacat's Java tree walk and its temporary tables.
-- **Metadata:** the catalog stores each metadata payload as one JSONB document, with a key of (entity, namespace). It promotes declared attributes to typed, indexed columns. GIN indexes serve equality and containment queries. Range queries and sorts need the promoted columns.
+- **Metadata:** the catalog stores each metadata payload as one JSONB document, with a key of (entity, namespace). One kind of index is not enough for all cases (see Metadata indexes, below).
 - **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by instance and namespace.
 - **Outbox:** every transaction appends its events to an outbox table. A relay publishes them on the change stream.
 
 mudcat produces RDF from this schema through a declared mapping and the JSON-LD context. A triple store is optional, and mudcat uses it only for export.
+
+### Metadata indexes
+
+GIN indexes on JSONB are not enough alone. They serve equality and containment for any number of keys. But they do not serve range queries or sorts, their updates are expensive, and PostgreSQL has poor estimates of selectivity for JSONB conditions. These limits matter most for the metadata of versions, where there can be 10^9 payloads. mudcat thus uses four kinds of index:
+
+| Metadata | Index | Serves |
+|---|---|---|
+| Rich entities (collections, artifacts, datasets, snapshots, sources, models) | GIN on each payload | Equality and containment on any key, declared or not |
+| Declared attributes that queries use often, on any entity | A **typed attribute index**: a derived table with rows of (attribute, typed value, entity), and one B-tree for each value type | Equality, range and sort, with good estimates. A new attribute needs no new database index |
+| A small number of the most used attributes | Columns with their own indexes | The fastest filters and sorts |
+| All other metadata of versions | No index in the catalog database. The values are also columns in manifests, with bounds for each manifest | Scans by a columnar engine, with pruning by manifest statistics |
+
+Rules:
+
+- **The payload is the source of truth.** The typed attribute index and the manifest columns are derived, and mudcat can build them again.
+- **The attribute registry decides.** A declared attribute has a flag that puts it in the typed attribute index. mudcat records how often queries use each attribute, and how many distinct values it has. The planner uses these numbers, and an administrator can see which attributes need an index.
+- **No limit on the number of keys, but a limit on indexed keys.** A deployment can have many thousands of metadata keys. Only the declared ones that queries use get rows in the typed attribute index.
+- **Many conditions in one query.** Each condition on the typed attribute index is one more join, which was the weak point of Datacat's metadata tables. For a query with many conditions over very many versions, the planner uses the manifest columns and a columnar engine.
+- **Search engines have the same problem.** An external search engine also has a limit on the number of fields. The state document thus gives undeclared attributes as a list of (key, value) pairs, not as one field for each key.
+
+The limits of each kind of index are not measured yet. They are part of the first benchmark (PF-4).
 
 ### Format plugins and site agents
 
@@ -248,7 +291,6 @@ Access checks go through one internal interface. Thus mudcat itself or an extern
 | SpiceDB | SpiceDB, self-hosted or as AuthZed's managed service | Lab and multi-site |
 | OpenFGA | OpenFGA, self-hosted or as Okta FGA (managed OpenFGA) | Lab and multi-site |
 | Others | Any service that supports the same operations, for example Ory Keto (Ory Network) | Through the same adapter contract |
-| Cedar (partial) | Cedar or Amazon Verified Permissions | Policy-based, not tuple-based; mudcat supplies entity data with each request. Supports checks, not reverse lookups |
 
 Managed offerings change often. Before you choose one, confirm the current offerings and their API coverage.
 
@@ -264,7 +306,7 @@ Managed offerings change often. Before you choose one, confirm the current offer
 | Read relationships | Reconciliation, export | ReadRelationships | Read |
 | Load and validate the schema | Deployment | WriteSchema | WriteAuthorizationModel |
 
-**A neutral schema.** mudcat defines its authorization schema once, in a neutral form. Then it compiles this schema to each provider's schema language (the SpiceDB schema language, the OpenFGA modelling language, a Cedar schema with policies). The core schema uses only features that both main implementations support:
+**A neutral schema.** mudcat defines its authorization schema once, in a neutral form. Then it compiles this schema to each provider's schema language (the SpiceDB schema language and the OpenFGA modelling language). The core schema uses only features that both main implementations support:
 
 - direct relations;
 - subject sets such as `group#member`;
@@ -327,11 +369,18 @@ mudcat publishes each change to the catalog as an event. This is change data cap
 | Collections and artifacts | Collection created, moved, removed. Artifact registered. Version registered. Delete marker written. Identifier added, changed, removed |
 | Replicas and storage | Replica registered, verified, suspect, lost, retired. Storage resource changed |
 | Metadata | Metadata payload written, removed. Tag assigned, removed. Field declared. Schema changed. Enricher output proposed, accepted, rejected |
-| Datasets | Snapshot committed (with its change summary). Ref moved. Snapshot published, deprecated, withdrawn, expired. Manifest sealed |
+| Datasets | Snapshot committed (with its change summary, see below). Ref moved. Snapshot published, deprecated, withdrawn, expired. Manifest sealed |
 | Access and policy | Relationship written, removed. Source and terms changed. Usage grant, constraint or duty changed. Legal hold placed, released |
 | Removal | Invalidation added. Replica purged (with its deletion receipt). Entity erased |
 | Provenance | Activity started, ended. Resolution created. Usage and generation recorded |
 | Placement | Replication rule created, removed. Completeness changed. Transfer requested, finished, failed |
+
+**Content of a snapshot-committed event.** The event always carries the change summary of the snapshot: the operation, and the numbers and total sizes of the members added and removed. An Iceberg snapshot summary has the same kind of content: it gives numbers, not lists of files. For the lists:
+
+- If the commit added and removed at most a configured number of members (for example 1,000), the event also carries the IDs of those members.
+- For a larger commit, the event carries a link to the **changes between snapshots** interface. This interface returns the members that one snapshot added and removed in comparison with another snapshot, in pages. Iceberg gives the same information through the status of each entry in its manifests.
+
+Thus an event has a size limit, and a consumer can always get the complete list.
 
 **Two streams.** Consumers need two different things, so mudcat publishes two streams from the same outbox:
 

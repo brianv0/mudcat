@@ -285,7 +285,7 @@ Each output value records the enricher and its version as its assertion origin. 
 
 - **Members** (`prov:hadMember`) are versions and annotation sets.
 - **Content hash.** The snapshot has a Merkle hash (`mc:contentHash`) over the hashes of its members. The Butler's collection-snapshot proposal does the same. Snapshots share their unchanged parts. It is possible to verify a snapshot from its hash alone.
-- **Parent and summary.** Each snapshot records its parent snapshot and a summary of the change. The summary gives the operation (add, remove, replace or annotate) and the number of members added and removed. The summary lets clients follow the history of a dataset without a comparison of member lists.
+- **Parent and summary.** Each snapshot records its parent snapshot and a summary of the change. The summary gives the operation (add, remove, replace or annotate), and the numbers and total sizes of the members added and removed, as an Iceberg snapshot summary does. It does not list the members. The changes between snapshots interface gives the lists (see [architecture.md](architecture.md)). The summary lets clients follow the history of a dataset without a comparison of member lists.
 - **Structural sharing.** A snapshot refers to its members through manifests. A new snapshot refers again to each manifest that did not change, and writes new manifests only for the changes. Iceberg shares manifests between table snapshots in the same way.
 - **Status:** `published`, `deprecated` or `withdrawn`, or no status for a snapshot that is not published.
   - Only published snapshots can be cited. A run can use any snapshot, and the record of the run names that snapshot exactly.

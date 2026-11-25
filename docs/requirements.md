@@ -170,6 +170,7 @@ Identifier prefixes:
 | EV-9 | mudcat shall return search results for a query that differs from a stored name by one spelling error. | Users do not always know exact names. | T |
 | EV-10 | mudcat shall rank search results with lexical match and vector similarity combined. | Each kind of match finds results that the other does not. | T |
 | EV-11 | mudcat shall check current access control and the invalidation set for each search result before it returns the result. | The search index can be behind the catalog. | T |
+| EV-12 | mudcat shall return, in pages, the members that one snapshot added and removed in comparison with another snapshot of the same dataset. | Consumers of snapshot events need the complete list of changes, and one event cannot hold millions of members. | T |
 
 ## Operation and deployment
 
@@ -196,6 +197,10 @@ Identifier prefixes:
 | PF-3 | mudcat shall register at least TBD versions per minute through bulk registration. | The Butler measured registration delays of up to ten minutes with hundreds of concurrent writers. | T |
 | PF-4 | mudcat shall return the first page of a metadata query over 10^8 (TBR) versions in less than TBD seconds. | Interactive search must stay usable at science scale. | T |
 | PF-5 | mudcat shall commit a change to a dataset in less than TBD milliseconds, with TBD concurrent writers on the same branch. | Iceberg commits take seconds because they write metadata files to object storage; mudcat commits only change database rows. | T |
+| PF-6 | mudcat shall answer an ancestry query over datasets and snapshots, to a depth of TBD, in less than TBD seconds. | Lineage operators are part of the query language, and a slow operator makes them useless. | T |
+| PF-7 | mudcat shall return an error that states the limit when a lineage traversal passes its limit of depth or nodes. | A partial result that looks complete is worse than an error. | T |
+| PF-8 | mudcat shall evaluate a policy predicate on a snapshot without a read of the members of that snapshot. | Discovery queries with policy filters must stay interactive. | A |
+| PF-9 | mudcat shall add a declared attribute to the typed attribute index without a new database index. | A deployment can have thousands of metadata keys; an index for each key does not scale. | I |
 
 ## Queries the system must answer
 
