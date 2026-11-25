@@ -519,7 +519,10 @@ async fn next_level(tx: &Tx<'_>, frontier: &[Uuid], direction: &str, ubiquitous:
         tx.q(
             "select from_id, entity_id, kind from derivation where from_id = any($1)
              union all select u.entity_id, u.activity_id, 'used:' || u.role from usage u where u.entity_id = any($1) and not (u.role = any($2))
-             union all select activity_id, entity_id, 'generated' from generation where activity_id = any($1)",
+             union all select activity_id, entity_id, 'generated' from generation where activity_id = any($1)
+             union all select e.member_id, r.snapshot_id, 'memberOf' from manifest_entry e
+                 join manifest_ref r on r.manifest_id = e.manifest_id and r.manifest_tenant = e.tenant_id
+                where e.member_id = any($1) and e.member_kind = 'snapshot' and not (e.member_id = any(r.excluded))",
             &[&frontier, &ubi],
         )
         .await?
@@ -528,7 +531,10 @@ async fn next_level(tx: &Tx<'_>, frontier: &[Uuid], direction: &str, ubiquitous:
             "select g.entity_id, g.activity_id, 'wasGeneratedBy' from generation g where g.entity_id = any($1)
              union all select u.activity_id, u.entity_id, 'used:' || u.role from usage u where u.activity_id = any($1) and not (u.role = any($2))
              union all select d.entity_id, d.from_id, d.kind from derivation d where d.entity_id = any($1)
-               and not exists (select 1 from generation g where g.entity_id = d.entity_id)",
+               and not exists (select 1 from generation g where g.entity_id = d.entity_id)
+             union all select r.snapshot_id, e.member_id, 'hadMember' from manifest_ref r
+                 join manifest_entry e on e.manifest_id = r.manifest_id and e.tenant_id = r.manifest_tenant
+                where r.snapshot_id = any($1) and e.member_kind = 'snapshot' and not (e.member_id = any(r.excluded))",
             &[&frontier, &ubi],
         )
         .await?

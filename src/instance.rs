@@ -287,7 +287,18 @@ pub async fn apply_schema(pool: &Pool) -> Result<()> {
     let c = pool.get().await?;
     // serialise schema changes between processes
     c.batch_execute("select pg_advisory_lock(4242)").await?;
+    // apply a schema text only once: DDL on tables in use would wait for, and deadlock with,
+    // the transactions of other processes that use the database
+    let hash = sha256_hex(SCHEMA.as_bytes());
+    c.batch_execute("create table if not exists schema_hash (hash text primary key)").await?;
+    if c.query_opt("select 1 from schema_hash where hash = $1", &[&hash]).await?.is_some() {
+        c.batch_execute("select pg_advisory_unlock(4242)").await?;
+        return Ok(());
+    }
     let r = c.batch_execute(SCHEMA).await;
+    if r.is_ok() {
+        c.execute("insert into schema_hash (hash) values ($1) on conflict do nothing", &[&hash]).await?;
+    }
     c.batch_execute("select pg_advisory_unlock(4242)").await?;
     r?;
     Ok(())

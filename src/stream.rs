@@ -22,12 +22,27 @@ pub async fn relay(sess: &Session) -> Result<usize> {
     let tenant = sys.tenant_id()?;
     tx.exec("select pg_advisory_xact_lock(hashtextextended($1, 7))", &[&tenant.to_string()]).await?;
     tx.exec("insert into stream_state (last_position, floor) values (0, 0) on conflict do nothing", &[]).await?;
+    // The oldest transaction still in progress in this database. The snapshot lists the
+    // transactions in progress on the whole server; those of other databases cannot write this
+    // outbox, so they must not hold the stream back.
+    let threshold: String = tx
+        .q1(
+            "with snap as (select pg_current_snapshot() as s),
+                  other as (select backend_xid::text::bigint as x from pg_stat_activity
+                             where datname is distinct from current_database() and backend_xid is not null),
+                  mine as (select x from snap, pg_snapshot_xip(snap.s) as x
+                            where (x::text::bigint % 4294967296) not in (select x from other))
+             select coalesce((select min(x) from mine), (select pg_snapshot_xmax(s) from snap))::text",
+            &[],
+        )
+        .await?
+        .get(0);
     let rows = tx
         .q(
             "select seq, commit_id, event from outbox
-              where xid < pg_snapshot_xmin(pg_current_snapshot())
+              where xid < $1::text::xid8
               order by coalesce(pg_xact_commit_timestamp((xid::text)::xid), 'epoch'::timestamptz), xid, seq",
-            &[],
+            &[&threshold],
         )
         .await?;
     if rows.is_empty() {

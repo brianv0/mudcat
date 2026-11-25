@@ -196,7 +196,7 @@ async fn refresh_dataset_annotations(tx: &Tx<'_>, version: i32, dataset: Uuid) -
 /// Bring the active index up to date with the change stream. Returns the number of events applied.
 pub async fn build(sess: &Session) -> Result<usize> {
     let sys = sess.as_principal(Principal::system());
-    crate::stream::relay(&sys).await?;
+    crate::stream::flush(&sys).await?;
     let mut c = sys.client().await?;
     let tx = sys.begin(&mut c).await?;
     let version = active_version(&tx).await?;
@@ -251,7 +251,7 @@ pub async fn build(sess: &Session) -> Result<usize> {
 /// serves queries; then switch to it and drop the old one (OP-3).
 pub async fn rebuild(sess: &Session) -> Result<i32> {
     let sys = sess.as_principal(Principal::system());
-    crate::stream::relay(&sys).await?;
+    crate::stream::flush(&sys).await?;
     let mut c = sys.client().await?;
     let tx = sys.begin(&mut c).await?;
     let old = active_version(&tx).await?;
