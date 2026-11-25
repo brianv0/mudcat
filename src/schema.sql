@@ -118,6 +118,7 @@ create table if not exists artifact (
   foreign key (tenant_id, collection_id) references collection (tenant_id, id)
 );
 create index if not exists artifact_collection on artifact (tenant_id, collection_id, name);
+create index if not exists artifact_latest on artifact (tenant_id, latest_version_id);
 
 create table if not exists version (
   tenant_id         uuid not null default mc_tenant(),
@@ -843,6 +844,7 @@ create table if not exists outbox (
 );
 alter table outbox add column if not exists ord bigint;
 create index if not exists outbox_ord on outbox (tenant_id, ord, seq);
+create index if not exists outbox_commit on outbox (tenant_id, commit_id);
 
 create table if not exists event (
   tenant_id  uuid not null default mc_tenant(),

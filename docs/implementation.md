@@ -17,7 +17,7 @@ curl -H 'host: group-a.mudcat.localhost' -H "authorization: Bearer $TOKEN" local
 target/release/mudcat-evals --scale full        # all 280 variants with the invariants
 target/release/mudcat-evals --template T3.2 -v  # one template, each check
 target/release/mudcat-bench                     # the benchmarks of performance.md
-cargo test                                      # the reference scenarios as integration tests
+cargo test                                      # the 31 reference scenarios, and others, as integration tests
 ```
 
 `mudcat authz-schema spicedb` and `mudcat authz-schema openfga` print the neutral authorization schema compiled for the two external services.
@@ -45,6 +45,7 @@ cargo test                                      # the reference scenarios as int
 | `export.rs` | "Metadata export" | DCAT and Croissant 1.1 descriptions of published snapshots (IN-4), the duties of a model at export |
 | `storage.rs`, `plugins.rs` | "Format plugins and site agents" | A simulated object store and POSIX file system with credentials, object versions and an access log; format plugins that read a header |
 | `evals/` | evals/README.md | The eval runner: a driver for each task template, the invariants, the mapping of results to the checks of tasks.yaml |
+| `tests/scenarios_uc*.rs` | evals/scenarios/ | The 31 reference scenarios as integration tests, one test for each scenario and an assertion for each expected result (a few that cannot be asserted are marked `NOT ASSERTED`, with the reason) |
 
 ## What is simulated
 
@@ -81,7 +82,8 @@ The evals contain decisions that the design documents do not state (evals/README
 
 ## Findings
 
-- **The relay couples the latency of tenants.** The relay publishes only events of transactions older than every transaction in progress, as the design requires. In PostgreSQL this horizon covers all transactions of the cluster, so a long transaction of one tenant (or of another database on the same server) delays the stream of every other tenant. The order is never wrong; only the latency grows. A deployment should keep write transactions short, and use a dedicated database for tenants with long transactions.
+- **"Older than every transaction in progress" does not give commit order.** The architecture lets the relay publish the outbox rows of transactions older than every transaction still in progress. Transaction IDs are given when a transaction first writes, not when it commits, so this rule can publish a later commit before an earlier one: the eval T1.2 found two events of one dataset with positions out of revision order. The rule also makes the stream of each tenant wait for the longest transaction on the whole database server. The implementation uses a different rule: a writing transaction takes a commit-order number at its end, under a short commit lock of its tenant that it holds until it is visible; the relay reads a horizon under the same lock and publishes up to it. The stream is then in commit order and independent of other tenants. The cost is that the last step of the write transactions of one tenant is serial (see [performance.md](performance.md)). The architecture should state this rule.
+- **Planner statistics and row-level security.** With row-level security, the tenant predicate is a value that the planner does not know. Right after a bulk load, stale statistics can make it estimate one row for the tenant and choose a scan of the whole tenant for a primary-key lookup. Fresh statistics (autovacuum, or `ANALYZE` after bulk loads) fix it. Large deployments should monitor this.
 - **Element-level invalidation needs the identity index.** A takedown by fingerprint must find the element inside derived files (shards, caches). The content-identity index holds the keys of the element lists of manifests, so the resolver can leave out single elements of a record or container version.
 - **Statistics of versions make leakage checks cheap.** Time ranges as statistics of versions, and keys in the content-identity index, let mudcat compute every criterion of the evals without a read of data.
 

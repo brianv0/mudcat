@@ -169,6 +169,34 @@ impl Parser {
 struct Compiler<'a> {
     params: Vec<Box<dyn ToSql + Sync + Send>>,
     defs: &'a std::collections::HashMap<String, (Uuid, String, bool)>,
+    /// for each condition on the typed index: true if few entities match it
+    selective: std::collections::HashMap<String, bool>,
+}
+
+/// The number of entities above which a condition is not selective: the query then probes the
+/// index for each row in key order, and below it the query starts from the index.
+const SELECTIVE: i64 = 20_000;
+
+fn cmp_key(id: Uuid, op: &str, v: &Tok) -> String {
+    format!("{id}|{op}|{}", tok_str(v))
+}
+
+/// The conditions of an expression on the typed attribute index.
+fn indexed_conditions(e: &Expr, defs: &std::collections::HashMap<String, (Uuid, String, bool)>, out: &mut Vec<(Uuid, String, String, Tok)>) {
+    match e {
+        Expr::And(a, b) | Expr::Or(a, b) => {
+            indexed_conditions(a, defs, out);
+            indexed_conditions(b, defs, out);
+        }
+        Expr::Not(a) => indexed_conditions(a, defs, out),
+        Expr::Cmp(name, op, v) => {
+            let key = name.rsplit('.').next().unwrap().to_string();
+            if let Some((id, dt, true)) = defs.get(name).or_else(|| defs.get(&key)).cloned() {
+                out.push((id, dt, op.clone(), v.clone()));
+            }
+        }
+        Expr::Call(..) => {}
+    }
 }
 
 const COLUMNS: &[(&str, &str, &str)] = &[
@@ -238,13 +266,29 @@ impl<'a> Compiler<'a> {
                             _ => "x.text_value",
                         };
                         let rhs = if datatype == "datetime" { format!("{p}::timestamptz") } else { p };
-                        Ok(format!("exists (select 1 from attr_index x where x.attr_id = {idp} and x.entity_id in (v.id, a.id) and {col} {o} {rhs})"))
+                        if self.selective.get(&cmp_key(id, op, v)).copied().unwrap_or(false) {
+                            // few matches: start from the index; artifact-level values stand for the versions of the artifact
+                            Ok(format!(
+                                "v.id in (select x.entity_id from attr_index x where x.attr_id = {idp} and {col} {o} {rhs}
+                                          union all select v2.id from attr_index x join version v2 on v2.artifact_id = x.entity_id and v2.tenant_id = x.tenant_id
+                                           where x.attr_id = {idp} and {col} {o} {rhs})"
+                            ))
+                        } else {
+                            // many matches: probe the index for each row, in key order
+                            Ok(format!(
+                                "(exists (select 1 from attr_index x where x.attr_id = {idp} and x.entity_id = v.id and {col} {o} {rhs})
+                                  or exists (select 1 from attr_index x where x.attr_id = {idp} and x.entity_id = a.id and {col} {o} {rhs}))"
+                            ))
+                        }
                     }
                     Some((_, datatype, false)) => {
                         let (p, vt) = self.value(v, op)?;
                         let k = self.param(Box::new(key.clone()));
                         let lhs = if vt == "number" && (datatype == "number" || datatype == "integer") { format!("(m.payload->>{k})::double precision") } else { format!("(m.payload->>{k})") };
-                        Ok(format!("exists (select 1 from metadata_payload m where m.entity_id in (v.id, a.id) and m.status = 'visible' and {lhs} {o} {p})"))
+                        Ok(format!(
+                            "(exists (select 1 from metadata_payload m where m.entity_id = v.id and m.status = 'visible' and {lhs} {o} {p})
+                              or exists (select 1 from metadata_payload m where m.entity_id = a.id and m.status = 'visible' and {lhs} {o} {p}))"
+                        ))
                     }
                     None => {
                         // undeclared: equality and containment only, through the GIN index
@@ -257,7 +301,10 @@ impl<'a> Compiler<'a> {
                             _ => Value::Null,
                         };
                         let p = self.param(Box::new(doc));
-                        Ok(format!("exists (select 1 from metadata_payload m where m.entity_id in (v.id, a.id) and m.status = 'visible' and m.payload @> {p})"))
+                        Ok(format!(
+                            "(exists (select 1 from metadata_payload m where m.entity_id = v.id and m.status = 'visible' and m.payload @> {p})
+                              or exists (select 1 from metadata_payload m where m.entity_id = a.id and m.status = 'visible' and m.payload @> {p}))"
+                        ))
                     }
                 }
             }
@@ -272,9 +319,12 @@ impl<'a> Compiler<'a> {
                         let a = self.param(Box::new(action));
                         let p = self.param(Box::new(purpose));
                         Ok(format!(
-                            "exists (select 1 from usage_grant g where g.source_id = v.source_id and g.action = {a} and (g.purpose = {p} or g.purpose = 'any')
+                            "(v.source_id in (select g.source_id from usage_grant g where g.action = {a} and (g.purpose = {p} or g.purpose = 'any')
                                       and g.revoked_commit is null and (g.not_after is null or g.not_after >= now()))
-                             and not exists (select 1 from invalidation i where i.target in (v.id::text, a.id::text, v.source_id::text, v.content_hash))"
+                             and not (v.id::text in (select target from invalidation where target_kind = 'version')
+                                   or a.id::text in (select target from invalidation where target_kind = 'artifact')
+                                   or v.source_id::text in (select target from invalidation where target_kind = 'source')
+                                   or coalesce(v.content_hash, '') in (select target from invalidation where target_kind = 'fingerprint')))"
                         ))
                     }
                     // a short fixed path: model -> generating activity -> resolution -> inputs
@@ -350,7 +400,7 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
             vec![(format!("{}.{}", r.get::<_, String>(1), r.get::<_, String>(2)), v.clone()), (r.get::<_, String>(2), v)]
         })
         .collect();
-    let mut comp = Compiler { params: Vec::new(), defs: &defs };
+    let mut comp = Compiler { params: Vec::new(), defs: &defs, selective: Default::default() };
     let mut wh = Vec::new();
     // the path glob over the collection namespace
     let g = glob.trim_end_matches('/');
@@ -376,27 +426,61 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
         if p.i < p.t.len() {
             return Err(Error::invalid("the query has text after its end"));
         }
+        // the smaller side first: count, up to a cap, the entities that each indexed condition matches
+        let mut conds = Vec::new();
+        indexed_conditions(&e, &defs, &mut conds);
+        for (id, dt, op, v) in conds {
+            let o = sql_op(&op)?;
+            let col = match dt.as_str() {
+                "number" | "integer" => "num_value",
+                "datetime" => "ts_value",
+                _ => "text_value",
+            };
+            let n: i64 = match (&v, dt.as_str()) {
+                (Tok::Num(x), "number" | "integer") => {
+                    tx.q1(&format!("select count(*) from (select 1 from attr_index where attr_id = $1 and {col} {o} $2 limit {SELECTIVE}) s"), &[&id, x]).await?.get(0)
+                }
+                (_, "datetime") => {
+                    let t = tok_str(&v);
+                    tx.q1(&format!("select count(*) from (select 1 from attr_index where attr_id = $1 and {col} {o} $2::text::timestamptz limit {SELECTIVE}) s"), &[&id, &t]).await?.get(0)
+                }
+                _ => {
+                    let t = if op == "=~" { glob_to_like(&tok_str(&v)) } else { tok_str(&v) };
+                    tx.q1(&format!("select count(*) from (select 1 from attr_index where attr_id = $1 and {col} {o} $2 limit {SELECTIVE}) s"), &[&id, &t]).await?.get(0)
+                }
+            };
+            comp.selective.insert(cmp_key(id, &op, &v), n < SELECTIVE);
+        }
         wh.push(comp.expr(&e)?);
     }
     if !opts.all_versions {
-        wh.push("v.id = a.latest_version_id and not v.is_delete_marker".into());
+        wh.push("not v.is_delete_marker".into());
     }
     // access: the ACL roots that the caller can read
     if let Some(roots) = crate::authz::readable_roots(tx).await? {
         let p = comp.param(Box::new(roots));
         wh.push(format!("c.acl_root_id = any({p})"));
     }
+    // the cursor: the artifact of the last row (latest versions), or the last version (all versions)
+    let key = if opts.all_versions { "v.id" } else { "a.id" };
     if let Some(a) = opts.after {
         let p = comp.param(Box::new(a));
-        wh.push(format!("v.id > {p}"));
+        wh.push(format!("{key} > {p}"));
     }
     let limit = opts.limit.unwrap_or(100).clamp(1, 10_000);
     let lp = comp.param(Box::new(limit + 1));
+    // the latest versions: drive from the artifacts, in key order, and join the latest version by
+    // its primary key, so that the first page needs no sort of the whole tenant
+    let from = if opts.all_versions {
+        "version v join artifact a on a.id = v.artifact_id and a.tenant_id = v.tenant_id
+           join collection c on c.id = a.collection_id and c.tenant_id = a.tenant_id"
+    } else {
+        "artifact a join collection c on c.id = a.collection_id and c.tenant_id = a.tenant_id
+           join version v on v.tenant_id = a.tenant_id and v.id = a.latest_version_id"
+    };
     let sql = format!(
-        "select v.id, c.path || '/' || a.name, v.number, v.size, v.content_hash from version v
-           join artifact a on a.id = v.artifact_id and a.tenant_id = v.tenant_id
-           join collection c on c.id = a.collection_id and c.tenant_id = a.tenant_id
-          where {} order by v.id limit {lp}",
+        "select v.id, c.path || '/' || a.name, v.number, v.size, v.content_hash, {key} from {from}
+          where {} order by {key} limit {lp}",
         wh.join(" and ")
     );
     let params: Vec<&(dyn ToSql + Sync)> = comp.params.iter().map(|p| p.as_ref() as &(dyn ToSql + Sync)).collect();
@@ -407,6 +491,6 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
         .take(limit as usize)
         .map(|r| json!({"version": r.get::<_, Uuid>(0), "path": r.get::<_, String>(1).replacen("//", "/", 1), "number": r.get::<_, i32>(2), "size": r.get::<_, i64>(3), "content_hash": r.get::<_, Option<String>>(4)}))
         .collect();
-    let next = if more { items.last().map(|i| i["version"].clone()) } else { None };
+    let next = if more { rows.get(limit as usize - 1).map(|r| json!(r.get::<_, Uuid>(5))) } else { None };
     Ok(json!({"items": items, "next": next, "sql": sql}))
 }

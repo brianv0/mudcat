@@ -28,6 +28,9 @@ struct Args {
     only: Vec<String>,
     #[arg(long, default_value = "evals/results/bench.json")]
     out: String,
+    /// Run only the queries, on an existing tenant whose payloads are already written.
+    #[arg(long)]
+    queries_on: Option<Uuid>,
 }
 
 fn pct(v: &mut [f64], p: f64) -> f64 {
@@ -169,6 +172,11 @@ async fn registration(b: &mut Bench, total: usize) -> anyhow::Result<Session> {
 
 /// PF-4 and PF-9: the first page of metadata queries over the versions of a tenant.
 async fn queries(b: &mut Bench, s: &Session) -> anyhow::Result<()> {
+    queries_setup(b, s).await?;
+    queries_run(b, s).await
+}
+
+async fn queries_setup(b: &mut Bench, s: &Session) -> anyhow::Result<()> {
     let t0 = Instant::now();
     in_tx!(s, |tx| {
         for (name, dt, indexed) in [("run", "number", true), ("status", "string", true), ("energy", "number", false)] {
@@ -199,11 +207,16 @@ async fn queries(b: &mut Bench, s: &Session) -> anyhow::Result<()> {
         c.batch_execute("analyze version; analyze artifact; analyze collection; analyze attr_index; analyze metadata_payload").await?;
     }
     b.report("metadata payloads and typed index (setup)", "PF-9", json!({"versions": n, "seconds": t0.elapsed().as_secs_f64()}));
-    let reader = s.as_principal(Principal::user("reader"));
     in_tx!(s, |tx| {
         let root = namespace::collection(&tx, "/bench").await?.acl_root;
         mudcat::authz::grant(&mut tx, "collection", &root.to_string(), "reader", "user:reader", None).await?;
     });
+    Ok(())
+}
+
+async fn queries_run(b: &mut Bench, s: &Session) -> anyhow::Result<()> {
+    let n: i64 = in_tx!(s, |tx| tx.q1("select count(*) from version", &[]).await?.get(0));
+    let reader = s.as_principal(Principal::user("reader"));
     for (label, q) in [
         ("path glob only", "/bench/**"),
         ("column: size > 6200", "/bench/** where size > 6200"),
@@ -463,6 +476,11 @@ async fn main() -> anyhow::Result<()> {
     let mut b = Bench { inst, results: Vec::new() };
     let run = |n: &str| a.only.is_empty() || a.only.iter().any(|o| o == n);
     let started = Instant::now();
+    if let Some(t) = a.queries_on {
+        let s = b.inst.session(t, Principal::user("admin"));
+        queries_run(&mut b, &s).await?;
+        return Ok(());
+    }
     if run("registration") || run("queries") {
         let s = registration(&mut b, a.versions).await?;
         if run("queries") {
