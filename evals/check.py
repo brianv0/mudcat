@@ -111,6 +111,26 @@ def check_benchmarks(known):
     return errors
 
 
+def check_conformance(known):
+    """Validate the descriptions of conformance suites in evals/conformance/."""
+    errors = []
+    for path in sorted((EVALS / "conformance").glob("*.yaml")):
+        spec = yaml.safe_load(path.read_text())
+        for suite in spec["suites"]:
+            where = f"{path.name} {suite.get('id', '?')}"
+            for key in ("name", "kind", "source", "what", "requirement"):
+                if not suite.get(key):
+                    errors.append(f"{where}: no {key!r}")
+            if suite.get("requirement") not in known:
+                errors.append(f"{where}: unknown requirement {suite.get('requirement')}")
+            for option in suite.get("options", []):
+                for key in ("name", "default", "mudcat", "reason"):
+                    if option.get(key) is None:
+                        errors.append(f"{where} option {option.get('name', '?')}: no {key!r}")
+        print(f"conformance {spec['id']}: {len(spec['suites'])} suites")
+    return errors
+
+
 def main():
     known = requirement_ids()
     errors = []
@@ -204,7 +224,7 @@ def main():
     else:
         print("\nall scenario files are valid")
     print()
-    benchmark_errors = check_benchmarks(known)
+    benchmark_errors = check_benchmarks(known) + check_conformance(known)
     for err in benchmark_errors:
         print(f"  {err}")
     print()

@@ -1,0 +1,84 @@
+# Conformance suites from other projects that mudcat must pass.
+# These suites exist. mudcat does not copy their tests. A runner starts mudcat and points each suite at it.
+# Facts about the suites are from their sources in November 2026.
+
+id: iceberg-rest
+subject: The Iceberg REST gateway of mudcat (docs/architecture.md, Gateways)
+
+suites:
+  - id: rck
+    name: Iceberg REST Compatibility Kit
+    kind: conformance
+    source: The module open-api of the repository apache/iceberg. Its README describes the kit.
+    what: >
+      A Technology Compatibility Kit for the Iceberg REST specification. It runs the tests of the Java
+      reference implementation, with the Java REST client, against a REST server that the configuration names.
+    classes:
+      - name: RESTCompatibilityKitCatalogTests
+        runs: The catalog tests of the reference implementation, for namespaces and tables. About 106 test methods.
+        covers:
+          - create, load, list, update and drop of namespaces, with properties and nested namespaces
+          - create, load, list, rename, drop and register of tables
+          - commits that change the schema, the partition spec and the sort order, with conflicts and retries
+          - appends, with concurrent appends
+          - create, replace, and create-or-replace transactions on one table, with concurrent transactions
+          - removal of old metadata files after a commit
+        in_scope: true
+      - name: RESTCompatibilityKitViewCatalogTests
+        runs: The view catalog tests of the reference implementation. About 52 test methods.
+        covers:
+          - create, load, list, rename, replace and drop of views
+        in_scope: false
+        reason: Views are not in the first scope of the gateway. The configuration response does not list the view endpoints.
+    run: >
+      ./gradlew :iceberg-open-api:test --tests RESTCompatibilityKitCatalogTests
+      -Drck.local=false -Drck.uri=<address of the gateway> -Drck.warehouse=<warehouse> -Drck.credential=<key>:<secret>
+    notes:
+      - Without rck.local=false, the kit tests its own local server and not mudcat.
+      - The kit needs a writable catalog. Each test makes namespaces and tables, and commits to them.
+      - The kit reads and writes table files through a FileIO, so the run needs a storage resource and credentials.
+      - The kit drops the tables and namespaces of earlier runs at its start. Run it in a tenant of its own.
+    options:
+      - name: rck.requires-namespace-create
+        default: true
+        mudcat: true
+        reason: A collection must exist before a client makes a table in it.
+      - name: rck.supports-serverside-retry
+        default: true
+        mudcat: true
+        reason: mudcat applies the updates of a commit to the newest state when the requirements of the commit still hold.
+      - name: rck.overrides-requested-location
+        default: false
+        mudcat: true on managed storage, false on external storage
+        reason: On managed storage, mudcat allocates the paths.
+      - name: rck.supports-names-with-dot
+        default: false
+        mudcat: false
+        reason: Not decided. A dot in a name is a separator in the identifiers of many engines.
+      - name: rck.supports-variant
+        default: false
+        mudcat: false
+        reason: Not in the first scope.
+    requirement: IN-14
+
+  - id: engines
+    name: Read and write tests with query engines
+    kind: integration
+    source: The projects of the engines. Lakekeeper runs its catalog against Spark, PyIceberg, Trino and StarRocks in the same way.
+    what: >
+      Each engine makes a table through the gateway, writes rows, reads them, changes the schema and reads an
+      older snapshot. These tests find differences that the Java client of the kit does not show, for example in
+      credentials and in the configuration that the server sends.
+    engines: [PyIceberg, Spark, Trino, DuckDB]
+    in_scope: true
+    requirement: IN-5
+
+  - id: openapi
+    name: Validation against the OpenAPI document of the specification
+    kind: contract
+    source: The file rest-catalog-open-api.yaml in the module open-api of apache/iceberg.
+    what: Each response of the gateway in the other two suites is validated against the schemas of this document.
+    in_scope: true
+    requirement: IN-15
+
+pin: The release of Iceberg whose kit mudcat must pass is TBD. The kit changes with each release of Iceberg.

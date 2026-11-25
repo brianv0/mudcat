@@ -180,6 +180,9 @@ Identifier prefixes:
 | IN-11 | mudcat shall serve a landing page with the JSON-LD description for each public dataset, and a sitemap of these pages. | Search engines find dataset descriptions through landing pages and sitemaps. | D |
 | IN-12 | mudcat shall import a Schema.org, DCAT or Croissant description as a dataset on a reference storage resource. | The public datasets that a team uses must be in the same catalog and the same lineage as its own data. | T |
 | IN-13 | mudcat shall generate each description with the permissions of the reader of that description. | A public description must not show what the catalog does not show to an anonymous reader. | T |
+| IN-14 | mudcat shall pass the namespace and table tests of the Iceberg REST Compatibility Kit against its Iceberg REST gateway. | The kit is the conformance suite of the Iceberg project for REST catalogs, and it runs the tests of the reference client against a server. | T |
+| IN-15 | mudcat shall list, in the configuration response of the Iceberg REST gateway, the endpoints that the gateway implements. | The specification lets a server state its endpoints, and clients then do not call the others; the gateway does not implement views in its first scope. | T |
+| IN-16 | mudcat shall accept, through the Iceberg REST gateway, the creation of a table, a commit to a table, a rename of a table and a drop of a table. | Engines must be able to write Iceberg tables with mudcat as their only catalog, and the compatibility kit needs a writable catalog. | T |
 
 ## Change stream and search
 

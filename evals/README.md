@@ -1,6 +1,6 @@
 # mudcat evals
 
-Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the eight grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have four layers.
+Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the eight grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have five layers.
 
 | Layer | File | Content |
 |---|---|---|
@@ -8,8 +8,9 @@ Status: definitions only. There is no mudcat implementation yet, and no runner. 
 | Task templates | [tasks.yaml](tasks.yaml) | 38 tasks with variation. `generate.py` expands them into 627 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
 | Benchmarks | [benchmarks/](benchmarks/) | Measured evals. The first one is for search: 13 query classes, 17 measures and 21 targets |
+| Conformance suites | [conformance/](conformance/) | Suites from other projects that mudcat must pass. The first one is the Iceberg REST Compatibility Kit |
 
-Run `python3 evals/check.py` from the repository root. It validates the four layers, and prints the coverage and the gaps.
+Run `python3 evals/check.py` from the repository root. It validates the five layers, and prints the coverage and the gaps.
 
 ## How a task is designed
 
@@ -123,6 +124,16 @@ A task has a result that is true or false. A benchmark has a result that is a nu
 - the **procedure** and the **baselines**.
 
 `check.py` makes sure that each query class has a target for quality and a target for speed, and that each target refers to a requirement.
+
+## Conformance suites
+
+Some interfaces of mudcat follow a specification of another project, and that project has its own tests. mudcat does not write these tests again. [conformance/iceberg-rest.yaml](conformance/iceberg-rest.yaml) names three suites for the Iceberg REST gateway:
+
+- the **REST Compatibility Kit** of the Iceberg project, which runs the tests of the Java reference client against a server. The file gives the command, the options and the value that mudcat sets for each option. The tests for views are not in scope;
+- read and write tests with **query engines**: PyIceberg, Spark, Trino and DuckDB;
+- validation of each response against the **OpenAPI document** of the specification.
+
+The kit needs a writable catalog, a storage resource and a tenant of its own. It does not test access control, policy, tenants or lineage. The tasks test these.
 
 ## Invariants
 

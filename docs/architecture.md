@@ -552,7 +552,8 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 
 ### Gateways
 
-- **Iceberg REST catalog** for records-structured datasets. With it, Spark, Trino, DuckDB and PyIceberg can read these datasets by name. The gateway also vends credentials. Optionally, the gateway can also show the manifest of any snapshot as an Iceberg table, so that these engines can query elements and their metadata. To do this, the gateway generates Iceberg metadata from mudcat's manifests. mudcat does not store its own state in Iceberg metadata files.
+- **Iceberg REST catalog.** The gateway has two functions. For Iceberg tables, it is a writable catalog with a basic scope (see Conformance of the Iceberg REST gateway, below). For other records-structured datasets, it is a read interface, as follows.
+- **Iceberg REST read interface** for records-structured datasets. With it, Spark, Trino, DuckDB and PyIceberg can read these datasets by name. The gateway also vends credentials. Optionally, the gateway can also show the manifest of any snapshot as an Iceberg table, so that these engines can query elements and their metadata. To do this, the gateway generates Iceberg metadata from mudcat's manifests. mudcat does not store its own state in Iceberg metadata files.
 - **Field gateways:** optional gateways that a field profile defines, listed in [fields.md](fields.md). They generate service metadata from CSVW descriptions through community schema profiles that are registered as plugins.
 - **Public catalog:** a landing page for each public dataset, with its Schema.org description as JSON-LD in the page, and a sitemap of these pages. Dataset search engines read these two things. The gateway serves only what an anonymous reader can see.
 - **Metadata export and import:** DCAT 3, Croissant 1.1, RO-Crate and DataCite, generated from the model for publication and citation (model, section 4, public description). The gateway also imports Schema.org, DCAT and Croissant descriptions from other repositories as datasets on reference storage.
@@ -565,6 +566,30 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
   - policy check.
 - **fsspec filesystem** (`mudcat://`) for notebooks and Python tools.
 - **Federation feed:** signed CloudEvents that tenants exchange. These events carry snapshot descriptions, lineage summaries, invalidations and completeness records. A tenant that receives an invalidation runs its own deletion workflow.
+
+### Conformance of the Iceberg REST gateway
+
+**Scope.** The gateway implements the endpoints of the Iceberg REST specification for the configuration, for namespaces and for tables: create, load, list, commit, rename, drop and register. It does not implement views, and it does not implement commits to more than one table, in its first scope. The configuration response lists the endpoints that the gateway implements, as the specification permits. Clients then do not call the other endpoints.
+
+**Mapping.**
+
+| Iceberg | mudcat |
+|---|---|
+| Catalog prefix or warehouse | A tenant, or a collection of it |
+| Namespace, with nested namespaces | A collection |
+| Table | An artifact whose structure kind is records and whose format is Iceberg |
+| Table snapshot | A version of that artifact |
+| Metadata file location | An attribute of the version. mudcat moves this pointer in the commit |
+| Requirements and updates of a commit | The same, in one database transaction |
+| Vended credentials | Credentials from the resolver, with the access check of the caller |
+
+**A commit writes one file.** The Iceberg specification makes the catalog write the new table metadata file. This is the only place where mudcat writes to object storage in a commit. mudcat writes the file first and moves the pointer in the transaction. A file whose transaction fails is removed by maintenance.
+
+**The conformance suite exists.** The Iceberg project has the REST Compatibility Kit. It runs the tests of the Java reference client against a server that the configuration names. It has about 106 tests for namespaces and tables, and about 52 tests for views. mudcat must pass the tests for namespaces and tables (IN-14). [evals/conformance/iceberg-rest.yaml](../evals/conformance/iceberg-rest.yaml) gives the command, the options of the kit and the value that mudcat sets for each option.
+
+**The kit is not enough alone.** It uses one client. Thus mudcat also runs read and write tests with PyIceberg, Spark, Trino and DuckDB, as other catalog projects do, and it validates each response against the OpenAPI document of the specification.
+
+**What the kit does not test.** It does not test access control, usage policy, tenants or lineage. The task templates in [evals/](../evals/README.md) test these through the same gateway (T5.1).
 
 ### Clients
 
