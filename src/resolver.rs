@@ -366,7 +366,7 @@ async fn resolve_inner(sess: &Session, req: &Request, again_of: Option<Uuid>) ->
     let mut excluded_invalidated: i64 = 0;
     for f in fixed.iter_mut() {
         f.versions.retain(|e| {
-            if invalid.contains(&e.member_id) {
+            if invalid.contains(&e.member_id) && !crate::mutant("no-invalidation") {
                 excluded_members.push(e.member_id.to_string());
                 excluded_invalidated += e.element_count;
                 false
@@ -727,7 +727,7 @@ async fn issue_credentials(tx: &Tx<'_>, tasks: &[Task]) -> Result<Vec<IssuedCred
             }
         }
         match prefix {
-            Some(p) => out.push(IssuedCredential { resource: res_name, credential: store.prefix_credential(&res.bucket, &p, expires), covers: ts.len() }),
+            Some(p) => out.push(IssuedCredential { resource: res_name, credential: store.prefix_credential(&res.bucket, if crate::mutant("wide-prefix") { "" } else { &p }, expires), covers: ts.len() }),
             None => {
                 for t in ts {
                     out.push(IssuedCredential { resource: res_name.clone(), credential: store.signed_url(&t.url, expires), covers: 1 });

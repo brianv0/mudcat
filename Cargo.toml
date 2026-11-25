@@ -30,6 +30,10 @@ clap = { version = "4", features = ["derive", "env"] }
 bytes = "1"
 parking_lot = "0.12"
 
+[features]
+# seeded defects for the mutation gate; see scripts/mutation-gate.sh
+mutants = []
+
 [profile.release]
 debug = 1
 

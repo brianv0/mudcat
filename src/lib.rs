@@ -28,4 +28,19 @@ pub mod stream;
 pub mod tenants;
 
 pub use error::{Error, Result};
+
+/// A seeded defect for the mutation gate (`scripts/mutation-gate.sh`, `evals/README.md`). With the
+/// cargo feature `mutants`, it is true when the environment variable `MUDCAT_MUTANT` has this
+/// name. Without the feature it is a constant `false`, and a normal build contains no switch.
+#[cfg(feature = "mutants")]
+pub fn mutant(name: &str) -> bool {
+    static ACTIVE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ACTIVE.get_or_init(|| std::env::var("MUDCAT_MUTANT").ok().filter(|s| !s.is_empty())).as_deref() == Some(name)
+}
+
+#[cfg(not(feature = "mutants"))]
+#[inline(always)]
+pub const fn mutant(_name: &str) -> bool {
+    false
+}
 pub use instance::{Instance, Principal, Session, Tx};

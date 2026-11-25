@@ -357,12 +357,12 @@ async fn commit_one(tx: &mut Tx<'_>, ch: &DatasetChange) -> Result<Committed> {
     crate::authz::require(tx, "registration", "write", "dataset", did).await?;
     // the row lock on the ref serialises the writers of one branch
     let r = tx
-        .qopt("select snapshot_id, kind from ref where dataset_id = $1 and name = $2 for update", &[&did, &ch.branch])
+        .qopt(if crate::mutant("no-branch-lock") { "select snapshot_id, kind from ref where dataset_id = $1 and name = $2" } else { "select snapshot_id, kind from ref where dataset_id = $1 and name = $2 for update" }, &[&did, &ch.branch])
         .await?
         .ok_or_else(|| Error::refused("no-ref", format!("the dataset has no branch {}", ch.branch), Value::Null))?;
     let head: Uuid = r.get(0);
     let kind: String = r.get(1);
-    if kind == "tag" {
+    if kind == "tag" && !crate::mutant("tag-ref-movable") {
         return Err(Error::refused(
             "tag-ref-immutable",
             format!("{} is a tag ref; its snapshot is fixed and a commit cannot move it", ch.branch),
@@ -657,6 +657,9 @@ pub async fn declare_equivalence(tx: &mut Tx<'_>, a: &Value, b: &Value, after: O
 
 /// The Merkle hash of a set of member entries (ID-5). Leaves are sorted by member ID.
 pub fn merkle(entries: &[Entry]) -> String {
+    if crate::mutant("merkle-constant") {
+        return sha256_hex(b"constant");
+    }
     let mut leaves: Vec<(Uuid, String)> = entries.iter().map(|e| (e.member_id, sha256_hex(format!("{}:{}:{}", e.member_kind, e.member_id, e.member_hash).as_bytes()))).collect();
     leaves.sort();
     let mut level: Vec<String> = leaves.into_iter().map(|l| l.1).collect();

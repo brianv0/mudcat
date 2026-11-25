@@ -268,7 +268,7 @@ pub async fn evaluate(tx: &Tx<'_>, sources: &[Uuid], action: &str, purpose: &str
         let mut v = SourceVerdict { source: r.get(0), name: r.get(1), kind: r.get(2), outcome: "refuse".into(), reason: String::new(), grant: None, clause: None, not_after: None };
         let grants = grants.and_then(|g| g.as_array().cloned()).unwrap_or_default();
         let live = grants.iter().find(|g| {
-            g["not_after"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|t| t.with_timezone(&chrono::Utc) >= tx.now).unwrap_or(true)
+            g["not_after"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|t| t.with_timezone(&chrono::Utc) >= tx.now || crate::mutant("expired-grant-ok")).unwrap_or(true)
         });
         if let Some(g) = live {
             v.outcome = "permit".into();

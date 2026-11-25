@@ -49,15 +49,26 @@ async fn relay_batch(sess: &Session, limit: i64) -> Result<usize> {
         lock.execute("select pg_advisory_unlock(hashtextextended($1, 13))", &[&tenant.to_string()]).await?;
         h?
     };
-    let rows = tx
-        .q(
+    let rows = if crate::mutant("relay-xid-rule") {
+        // seeded defect: the rule of the first version of architecture.md (older than every transaction in progress)
+        tx.q(
+            "select seq, commit_id, event from outbox
+              where xid < pg_snapshot_xmin(pg_current_snapshot())
+              order by coalesce(pg_xact_commit_timestamp((xid::text)::xid), 'epoch'::timestamptz), xid, seq
+              limit $1",
+            &[&limit],
+        )
+        .await?
+    } else {
+        tx.q(
             "select seq, commit_id, event from outbox
               where ord <= $1
               order by ord, seq
               limit $2",
             &[&horizon, &limit],
         )
-        .await?;
+        .await?
+    };
     if rows.is_empty() {
         tx.commit().await?;
         return Ok(0);
@@ -164,6 +175,9 @@ async fn filter_for(tx: &Tx<'_>, scope: Option<&str>) -> Result<Filter> {
 impl Filter {
     /// Send to a subscription only the events for entities that its identity can read (EV-6).
     fn allows(&self, ev: &Value) -> bool {
+        if crate::mutant("no-stream-filter") {
+            return true;
+        }
         let root: Option<Uuid> = ev["acl_root"].as_str().and_then(|s| s.parse().ok());
         match root {
             Some(r) => {

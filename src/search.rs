@@ -553,6 +553,15 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
         let hit = match kind.as_str() {
             "annotation" | "artifact" => {
                 let Some(mut v) = parent else { continue };
+                if crate::mutant("search-no-recheck") {
+                    // seeded defect: the hit is taken with no check of invalidation, of the newest version or of access
+                    if !seen_parents.insert(v) {
+                        continue;
+                    }
+                    let info = crate::namespace::version(&tx, v).await?;
+                    hits.push(Hit { entity: info.artifact_id, kind: "artifact".into(), version: Some(v), path: Some(info.path), score: s, matched: json!({"path": doc["path"]}) });
+                    continue;
+                }
                 if invalid_cache.contains(&v) {
                     removed += 1;
                     continue;

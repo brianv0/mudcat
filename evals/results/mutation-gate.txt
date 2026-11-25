@@ -1,0 +1,16 @@
+mutation gate: ec96117baa4b41c9c51b4738145cacf143a7daa6 dirty=yes smoke scale 2026-11-25T17:34:37Z
+templates: failed variants in parentheses; tests: failed test names
+
+defect            | templates that failed              | tests that failed     | result
+------------------+------------------------------------+-----------------------+---------
+(no defect)       | none                               | none                  | ok (all green)
+no-invalidation   | T1.1(20) T2.3(1) T3.2(36) T4.2(1)  | uc3_03 uc3_04 uc3_07  | detected
+expired-grant-ok  | T3.1(8)                            | uc3_02                | detected
+no-compartment    | T4.2(3)                            | uc3_04                | detected
+search-no-recheck | T4.2(5)                            | uc1_04 uc4_03         | detected
+no-stream-filter  | none                               | uc4_05                | detected
+wide-prefix       | none                               | uc1_05                | detected
+merkle-constant   | none                               | none                  | NOT DETECTED (0/1 runs)
+tag-ref-movable   | none                               | uc2_06                | detected
+no-branch-lock    | T1.2(7)                            | uc1_02                | detected
+relay-xid-rule    | T4.1(1)                            | none                  | NOT DETECTED (2/3 runs)

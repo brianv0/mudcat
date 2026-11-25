@@ -317,7 +317,7 @@ pub async fn check_as(tx: &Tx<'_>, subj: &Subjects, permission: &str, object_typ
         return Ok(d);
     }
     // compartments are an intersection
-    if permission == "read" {
+    if permission == "read" && !crate::mutant("no-compartment") {
         for c in compartments_of(tx, object_type, id).await? {
             let m = tx
                 .qopt(
