@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate the eval scenario files.
+"""Validate the evals: the reference scenarios and the task templates.
 
-Checks the structure of each eval, the action names, the variant names and
-the requirement IDs. Prints a summary and the list of gaps. Exits with 1 if
-a file is not valid.
+For the scenarios, checks the structure of each one, the action names, the
+variant names and the requirement IDs, and prints a summary and the list of
+gaps. Then runs the validation of generate.py for the task templates and the
+invariants. Exits with 1 if a file is not valid.
 
 Run from the repository root: python3 evals/check.py
 """
@@ -13,6 +14,8 @@ import re
 import sys
 
 import yaml
+
+import generate
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EVALS = ROOT / "evals"
@@ -60,7 +63,7 @@ def main():
     gaps = []
     seen_ids = set()
 
-    for path in sorted(EVALS.glob("uc*.yaml")):
+    for path in sorted((EVALS / "scenarios").glob("uc*.yaml")):
         try:
             evals = yaml.safe_load(path.read_text())
         except yaml.YAMLError as err:
@@ -121,11 +124,11 @@ def main():
             errors.append(f"use case {use_case}: {count} evals, need {MIN_EVALS_PER_USE_CASE}")
 
     total = sum(per_use_case.values())
-    print(f"{total} evals in {len(per_use_case)} use cases")
+    print(f"{total} reference scenarios in {len(per_use_case)} use cases")
     for use_case in sorted(per_use_case):
         kinds = ", ".join(sorted(variants[use_case]))
-        print(f"  use case {use_case}: {per_use_case[use_case]} evals; variants: {kinds}")
-    print(f"{len(used_requirements)} of {len(known)} requirements have at least one eval")
+        print(f"  use case {use_case}: {per_use_case[use_case]} scenarios; variants: {kinds}")
+    print(f"{len(used_requirements)} of {len(known)} requirements have at least one scenario")
     unused_actions = sorted(ACTIONS - set(used_actions))
     if unused_actions:
         print(f"actions with no eval: {', '.join(unused_actions)}")
@@ -140,9 +143,10 @@ def main():
         print(f"\n{len(errors)} errors:")
         for err in errors:
             print(f"  {err}")
-        return 1
-    print("\nall eval files are valid")
-    return 0
+    else:
+        print("\nall scenario files are valid")
+    print()
+    return max(1 if errors else 0, generate.main([]))
 
 
 if __name__ == "__main__":

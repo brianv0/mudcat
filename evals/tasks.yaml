@@ -1,0 +1,630 @@
+# Task templates. Each template is one task with variation.
+# generate.py expands each template into concrete variants, and uses the
+# oracle to compute the expected outcome of each variant.
+#
+# Keys of a template:
+#   goal         what the actor wants. The runner gives only this to the actor.
+#   axes         decision axes. Each one changes the expected outcome or the
+#                checks. The generator makes one variant for each combination.
+#   cover        cover axes. They must not change the expected outcome. The
+#                generator makes sure that each value occurs with each outcome.
+#   exclude      combinations of decision values that make no sense.
+#   fixture      the start state, with the parameters in braces.
+#   distractors  parts of the start state that look relevant and are not.
+#   oracle       rules in order. The first rule that matches gives the outcome.
+#   checks       statements about the end state. `outcome` and `when` limit a
+#                check to some variants.
+#   invariants   IDs from invariants.yaml that a runner checks after each step.
+#   verifies     requirement IDs from docs/requirements.md.
+#   reference    a scenario in scenarios/ that shows one possible sequence.
+
+# ---------------------------------------------------------------- use case 1
+
+- id: T1.1
+  use_case: 1
+  name: resolve-and-read
+  goal: Get the data of a dataset for a training job, and read it directly from storage.
+  axes:
+    structure: [records, container, stream, array, opaque]
+    storage: [managed, external]
+    invalidated: [none, some, all]
+  cover:
+    members: [10, 10000]
+  fixture: >
+    A published snapshot with {members} members of the structure {structure}, on storage with the
+    management mode {storage}. Invalidated members: {invalidated}. All sources grant train for research.
+  oracle:
+    - if: {invalidated: all}
+      then: {outcome: nothing-to-read}
+    - else: {outcome: resolved}
+  checks:
+    - check: The resolution names the exact version of each input.
+    - outcome: resolved
+      check: The plan covers each member that is not invalidated, and no other member.
+    - outcome: resolved
+      check: Each task of the plan has a replica URL, the expected bytes and the expected number of elements.
+    - outcome: resolved
+      check: The job read all bytes directly from storage.
+    - outcome: resolved
+      when: {invalidated: some}
+      check: The answer gives the number of members that policy excluded.
+    - outcome: nothing-to-read
+      check: The plan has no task, and mudcat issued no credentials.
+    - outcome: nothing-to-read
+      check: The answer states that policy excluded all {members} members.
+    - when: {structure: [stream, array]}
+      check: mudcat made no element list. The plan addresses parts by selector.
+    - when: {structure: [records, container]}
+      check: The plan addresses elements through an element list.
+    - when: {structure: opaque}
+      check: The plan addresses each member as one object.
+    - when: {storage: external}
+      check: mudcat copied no bytes at registration.
+  invariants: [INV-1, INV-3, INV-4, INV-15]
+  verifies: [ST-1, ST-4, ST-5, RD-1, RD-2, RD-7, UP-3, UP-9]
+  reference: UC1-01
+
+- id: T1.2
+  use_case: 1
+  name: concurrent-commits
+  goal: Several writers change the same branch of a dataset at the same time. No change is lost.
+  axes:
+    change: [add-only, remove, replace]
+    members: [disjoint, overlapping]
+  cover:
+    writers: [2, 8, 32]
+  fixture: >
+    A dataset whose branch ref main points to a snapshot with 1,000 members. {writers} writers start
+    at the same time. Each makes one commit of the kind {change}. The members that they change are {members}.
+  oracle:
+    - if: {change: add-only}
+      then: {outcome: all-succeed-first-time}
+    - else: {outcome: conflicts-then-retries}
+  checks:
+    - check: The change stream has one snapshot-committed event for each successful commit, in commit order.
+    - check: The sum of the change summaries is the difference between the first snapshot and the last.
+    - outcome: all-succeed-first-time
+      check: Each of the {writers} commits succeeds with no retry by the client.
+    - outcome: all-succeed-first-time
+      check: The last snapshot contains the union of all added members.
+    - outcome: all-succeed-first-time
+      when: {members: overlapping}
+      check: A member that two writers added is in the last snapshot one time.
+    - outcome: conflicts-then-retries
+      check: Each writer whose requirement names an old snapshot gets a conflict, and no partial change.
+    - outcome: conflicts-then-retries
+      check: After the retries, the members are the result of the commits applied one after the other, in commit order.
+    - outcome: conflicts-then-retries
+      when: {members: overlapping}
+      check: A writer that removes or replaces a member that is already gone gets an error that names the member.
+  invariants: [INV-2, INV-5]
+  verifies: [ID-7, EV-1, EV-3, EV-13, PF-5]
+  reference: UC1-02
+
+- id: T1.3
+  use_case: 1
+  name: stage-near-compute
+  goal: Have a complete and verified copy of a snapshot on storage near the compute cluster, then resolve it for a job on that cluster.
+  axes:
+    fault: [none, corrupt-some, mover-stops, agent-stops]
+    resolve: [only-at-cluster, any-place]
+  cover:
+    target: [managed-cache, external-bucket]
+    members: [100, 100000]
+  fixture: >
+    A published snapshot with {members} members, complete on one storage resource far from the
+    cluster. A replication rule asks for one copy on a {target} near the cluster. Fault during the
+    transfer: {fault}. Then a job on the cluster resolves the snapshot with the place option {resolve}.
+  oracle:
+    - if: {fault: none}
+      then: {outcome: complete}
+    - if: {fault: agent-stops}
+      then: {outcome: complete-after-lease-ends}
+    - if: {resolve: only-at-cluster}
+      then: {outcome: not-available-there}
+    - else: {outcome: served-from-two-places}
+  checks:
+    - check: No replica has the state verified without a successful comparison of checksums.
+    - check: The completeness record agrees with the states of the replicas.
+    - outcome: [complete, complete-after-lease-ends]
+      check: The plan uses only replicas on the target.
+    - outcome: complete-after-lease-ends
+      check: mudcat gave the task of the stopped agent to another agent after the lease ended.
+    - outcome: [not-available-there, served-from-two-places]
+      check: The completeness record says not complete, and the rule stays not satisfied.
+    - outcome: not-available-there
+      check: mudcat issues no plan. The answer gives the number of members that are not available near the cluster.
+    - outcome: served-from-two-places
+      check: The plan uses the far replica for each member that has no verified replica near the cluster.
+    - outcome: served-from-two-places
+      check: The plan uses no replica with the state suspect or copying.
+  invariants: [INV-8]
+  verifies: [PL-1, PL-2, RD-4, QY-4]
+  reference: UC1-03
+
+# ---------------------------------------------------------------- use case 2
+
+- id: T2.1
+  use_case: 2
+  name: combine-methods
+  goal: Make and publish one training dataset from two datasets.
+  axes:
+    methods: [same, different]
+    equivalence: [none, declared]
+    step: [commit, publish]
+  fixture: >
+    Two published datasets. Their method records are {methods}. Declared equivalence between the
+    methods: {equivalence}. The actor does the step {step}.
+  oracle:
+    - if: {methods: different, equivalence: none, step: publish}
+      then: {outcome: refused}
+    - if: {methods: different, equivalence: none, step: commit}
+      then: {outcome: accepted-with-warning}
+    - else: {outcome: accepted}
+  checks:
+    - outcome: refused
+      check: The error names the two methods and the attribute that differs.
+    - outcome: refused
+      check: The dataset has no new published snapshot.
+    - outcome: accepted-with-warning
+      check: The snapshot has a warning that names the two methods.
+    - outcome: accepted
+      when: {methods: different}
+      check: The snapshot refers to the declared equivalence, with the person and the reason.
+    - outcome: accepted
+      when: {methods: same}
+      check: The snapshot has no warning.
+  invariants: [INV-2]
+  verifies: [UP-1, ST-6, ID-3]
+  reference: UC2-02
+
+- id: T2.2
+  use_case: 2
+  name: leakage-check
+  goal: Find out if test data is related to the training inputs of a model.
+  axes:
+    criterion: [exact-checksum, near-duplicate, domain-similarity, time-range-overlap]
+    related: [0, 3, 500]
+  fixture: >
+    A model with recorded training inputs, and an evaluation dataset with 10,000 elements. Under the
+    criterion {criterion}, exactly {related} test elements are related to training elements.
+  distractors:
+    - The training inputs contain 40 pairs of elements that are related to each other under the same criterion.
+    - A second evaluation dataset, which the request does not name, has 900 related elements.
+  oracle:
+    - if: {related: 0}
+      then: {outcome: satisfied}
+    - else: {outcome: violated}
+  checks:
+    - check: A leakage assertion exists with the criterion, its version and the evidence.
+    - check: A second check with the same inputs gives the same result.
+    - check: The assertion counts only relations between the named evaluation dataset and the training inputs.
+    - outcome: violated
+      check: The assertion gives the number of related test elements, and the number is {related}.
+    - when: {criterion: time-range-overlap}
+      check: mudcat computed the result from selectors, with no scan of data.
+    - when: {criterion: exact-checksum}
+      check: mudcat computed the result from recorded checksums, with no scan of data.
+  invariants: [INV-4]
+  verifies: [QY-3, UP-3, PR-2]
+  reference: UC2-03
+
+- id: T2.3
+  use_case: 2
+  name: reproduce-later
+  goal: Get again, one year later, exactly the training inputs of a model.
+  axes:
+    change: [none, input-has-new-version, member-invalidated, path-renamed, replica-moved, enricher-has-new-version, as-of-expired-snapshot]
+  fixture: >
+    A model with a resolution from one year ago. Change since then: {change}.
+  oracle:
+    - if: {change: member-invalidated}
+      then: {outcome: same-less-excluded}
+    - if: {change: as-of-expired-snapshot}
+      then: {outcome: error-states-expiry}
+    - else: {outcome: same}
+  checks:
+    - outcome: same
+      check: The members and their versions are the same as one year ago.
+    - outcome: same
+      when: {change: input-has-new-version}
+      check: mudcat also reports that an input has a newer version.
+    - outcome: same
+      when: {change: path-renamed}
+      check: The answer shows the new path, and the same IDs.
+    - outcome: same
+      when: {change: replica-moved}
+      check: The plan has the new replica URL, and the same version IDs and checksums.
+    - outcome: same
+      when: {change: enricher-has-new-version}
+      check: The result has the old version of the annotation set.
+    - outcome: same-less-excluded
+      check: mudcat reports each element that policy now excludes, and gives the other elements unchanged.
+    - outcome: error-states-expiry
+      check: The error states that the snapshot expired. mudcat does not resolve to another snapshot.
+  invariants: [INV-2, INV-3, INV-4]
+  verifies: [UP-3, UP-9, UP-12, UP-13, UP-14, QY-8, ID-2]
+  reference: UC2-01
+
+# ---------------------------------------------------------------- use case 3
+
+- id: T3.1
+  use_case: 3
+  name: policy-gate
+  goal: Get data for an action and a purpose. mudcat must permit it only when every source permits it.
+  axes:
+    action: [train, evaluate]
+    purpose: [research, commercial]
+    sources: [all-permit, one-lacks-purpose, one-lacks-action, one-expired, one-partly-compiled]
+    scope: [whole-dataset, permitted-sources-only]
+  fixture: >
+    A dataset with members from three sources. Source state: {sources}. With one-lacks-purpose, one
+    source grants research only. With one-lacks-action, one source grants evaluate only. The request
+    is for the action {action}, the purpose {purpose} and the scope {scope}.
+  oracle:
+    - if: {scope: permitted-sources-only}
+      then: {outcome: permitted}
+    - if: {sources: all-permit}
+      then: {outcome: permitted}
+    - if: {sources: one-lacks-purpose, purpose: commercial}
+      then: {outcome: refused}
+    - if: {sources: one-lacks-purpose, purpose: research}
+      then: {outcome: permitted}
+    - if: {sources: one-lacks-action, action: train}
+      then: {outcome: refused}
+    - if: {sources: one-lacks-action, action: evaluate}
+      then: {outcome: permitted}
+    - if: {sources: one-expired}
+      then: {outcome: refused}
+    - if: {sources: one-partly-compiled}
+      then: {outcome: blocked-for-review}
+  checks:
+    - outcome: permitted
+      check: The resolution has a policy decision with the policies, the version of the evaluator and the result.
+    - outcome: permitted
+      check: mudcat issued a plan and credentials.
+    - outcome: permitted
+      when: {scope: permitted-sources-only}
+      check: The plan has no element of a source that does not permit the request, and the answer gives the number of elements that mudcat left out.
+    - outcome: refused
+      check: The error names the source that does not permit the request, and the number of its elements.
+    - outcome: [refused, blocked-for-review]
+      check: mudcat issued no plan and no credentials.
+    - outcome: [refused, blocked-for-review]
+      check: The audit log has the decision.
+    - outcome: blocked-for-review
+      check: The answer names the clause that needs a review.
+  invariants: [INV-9, INV-14]
+  verifies: [UP-1, UP-2, UP-3, UP-5, UP-6, UP-15, AC-8]
+  reference: UC3-01
+
+- id: T3.2
+  use_case: 3
+  name: removal
+  goal: Remove content at one of five levels, and get the effect of that level and no other.
+  axes:
+    level: [remove-from-dataset, delete-marker, invalidate, purge, erase]
+    hold: [none, active]
+    point: [before-any-use, after-resolution, after-training]
+    storage: [managed, external-with-versions]
+  fixture: >
+    Content that is a member of two published snapshots, with replicas on storage of the kind {storage}.
+    Legal hold on the content: {hold}. The removal happens {point}. The actor asks for the level {level}.
+  distractors:
+    - Other content from the same source, which the request does not name, is in the same two snapshots.
+  oracle:
+    - if: {level: [remove-from-dataset, delete-marker]}
+      then: {outcome: forward-only}
+    - if: {level: invalidate}
+      then: {outcome: excluded}
+    - if: {level: [purge, erase], hold: active}
+      then: {outcome: blocked-by-hold}
+    - if: {level: purge}
+      then: {outcome: bytes-gone}
+    - if: {level: erase}
+      then: {outcome: record-gone}
+  checks:
+    - check: The published snapshots keep their members list and their Merkle hash.
+    - check: The other content from the same source resolves as before.
+    - outcome: forward-only
+      check: The newest state does not contain the content. Older snapshots and older versions still resolve.
+    - outcome: forward-only
+      when: {point: after-training}
+      check: The model has no flag.
+    - outcome: [forward-only, excluded]
+      when: {hold: active}
+      check: The hold does not block the request, and the bytes exist.
+    - outcome: [excluded, bytes-gone, record-gone, blocked-by-hold]
+      check: The content does not resolve from any snapshot, old or new, for a normal user.
+    - outcome: [excluded, bytes-gone, record-gone, blocked-by-hold]
+      when: {point: [after-resolution, after-training]}
+      check: A new run of the old resolution reports the content as excluded.
+    - outcome: [excluded, bytes-gone, record-gone, blocked-by-hold]
+      when: {point: after-training}
+      check: The model has a flag with the number of affected elements. mudcat did not change the model.
+    - outcome: bytes-gone
+      check: Each replica has a deletion receipt, and the catalog record of the content stays.
+    - outcome: [bytes-gone, record-gone]
+      when: {storage: external-with-versions}
+      check: The old object versions on the storage are deleted also.
+    - outcome: record-gone
+      check: Only an erasure record stays, and the state stream has a removal event.
+    - outcome: blocked-by-hold
+      check: The bytes exist, and the answer names the hold and its reason.
+    - outcome: blocked-by-hold
+      check: The content is in the retention compartment.
+  invariants: [INV-2, INV-3, INV-10, INV-12]
+  verifies: [UP-7, UP-8, UP-9, UP-10, UP-11, EV-7, QY-8]
+  reference: UC3-03
+
+- id: T3.3
+  use_case: 3
+  name: content-summary
+  goal: Make the summary of training content for a model, from the catalog only.
+  axes:
+    kinds: [crawl-only, crawl-and-licensed, all-four-kinds]
+    base_models: [0, 1, 2]
+    records: [complete, one-run-has-no-resolution]
+  cover:
+    sources: [5, 500]
+  fixture: >
+    A model whose training used {sources} sources of the kinds {kinds}. The model has a chain of
+    {base_models} base models, each with its own sources. Records of the training runs: {records}.
+  oracle:
+    - if: {records: one-run-has-no-resolution}
+      then: {outcome: report-states-gap}
+    - else: {outcome: report}
+  checks:
+    - check: The report has one section for each kind of source that the fixture has, and no other section.
+    - check: The numbers of elements in the report agree with the numbers in the resolutions.
+    - check: mudcat read no training data to make the report.
+    - check: For crawled content, the report lists domains by size, crawler names and fetch periods.
+    - when: {kinds: [crawl-and-licensed, all-four-kinds]}
+      check: For licensed content, the report names each licensor and its terms.
+    - when: {base_models: [1, 2]}
+      check: The report includes the sources of each of the {base_models} base models in the chain.
+    - outcome: report-states-gap
+      check: The report names the run that has no resolution, and states that the report is not complete.
+    - outcome: report
+      check: The report states that it covers all recorded runs.
+  invariants: [INV-4]
+  verifies: [QY-1, QY-2, UP-1, UP-4]
+  reference: UC3-06
+
+# ---------------------------------------------------------------- use case 4
+
+- id: T4.1
+  use_case: 4
+  name: stream-consumer
+  goal: Keep an index outside mudcat equal to the catalog, with the change stream only.
+  axes:
+    consumer: [current, stops-and-restarts, behind, position-too-old]
+    rollbacks: [none, some]
+  cover:
+    writers: [1, 8, 32]
+  fixture: >
+    {writers} writers register 10,000 documents in transactions that overlap. Transactions that roll
+    back: {rollbacks}. One consumer with the state {consumer}.
+  oracle:
+    - if: {consumer: position-too-old}
+      then: {outcome: must-backfill}
+    - else: {outcome: complete-in-order}
+  checks:
+    - check: The consumer never gets a position lower than a position that it got before.
+    - check: At the end, the index of the consumer has exactly the documents of the catalog.
+    - when: {rollbacks: some}
+      check: The consumer got no event for a transaction that rolled back.
+    - when: {consumer: stops-and-restarts}
+      check: Events that the consumer gets a second time change nothing, because it uses the revision.
+    - when: {consumer: behind}
+      check: The consumer gets all events that it did not have, with no backfill.
+    - outcome: must-backfill
+      check: mudcat tells the consumer that its position is too old.
+    - outcome: must-backfill
+      check: After a backfill, the live stream continues with no gap.
+  invariants: [INV-5, INV-13]
+  verifies: [EV-1, EV-3, EV-4, EV-5, EV-13, OP-4, OP-5]
+  reference: UC4-04
+
+- id: T4.2
+  use_case: 4
+  name: retrieval-after-change
+  goal: After a change to access or content, the next request shows the new state at once.
+  axes:
+    change: [remove-from-group, remove-direct-grant, invalidate-document, delete-marker, new-version, restrict-by-tag]
+    request: [search-with-current-index, search-with-stale-index, resolve]
+  fixture: >
+    A user who can read a document through a group and through no other grant, or through one direct
+    grant. The change {change} happens. The user then makes the request {request}.
+  distractors:
+    - A second user has access to the same document through a grant that the change does not affect.
+    - A second document with almost the same text is not affected by the change.
+  oracle:
+    - if: {change: new-version}
+      then: {outcome: shows-new-version}
+    - else: {outcome: hidden-at-once}
+  checks:
+    - check: The second document is in the answer as before.
+    - outcome: hidden-at-once
+      check: The answer to the affected user contains nothing from the affected content.
+    - outcome: hidden-at-once
+      when: {request: search-with-stale-index}
+      check: This is true although the search index has not processed the change.
+    - outcome: hidden-at-once
+      when: {change: [remove-from-group, remove-direct-grant, restrict-by-tag]}
+      check: The second user still gets the document.
+    - outcome: hidden-at-once
+      when: {change: [remove-from-group, remove-direct-grant]}
+      check: mudcat used no cached decision, and the audit log has the denial.
+    - outcome: hidden-at-once
+      when: {change: invalidate-document}
+      check: The second user does not get the document.
+    - outcome: hidden-at-once
+      when: {change: delete-marker}
+      check: An older version still resolves by its version ID for a user with access.
+    - outcome: shows-new-version
+      check: The answer has the new version, and not the old version.
+    - outcome: shows-new-version
+      check: A citation of the old version still resolves to the old version.
+  invariants: [INV-3, INV-9, INV-11]
+  verifies: [AC-1, AC-7, AC-8, EV-11, UP-9]
+  reference: UC4-02
+
+# ---------------------------------------------------------------- use case 5
+
+- id: T5.1
+  use_case: 5
+  name: tenant-isolation
+  goal: A user of one tenant tries each interface. The user gets the data of that tenant only.
+  axes:
+    token: [valid-for-own-tenant, none]
+    endpoint: [own, other-tenant]
+    target: [own-data, id-of-other-tenant]
+  cover:
+    interface: [query-by-id, search, change-stream, resolve, lineage, iceberg-gateway, mcp]
+  exclude:
+    - {token: none, endpoint: other-tenant}
+    - {token: none, target: id-of-other-tenant}
+  fixture: >
+    Two tenants in one instance, with data in each. A user of the first tenant uses the interface
+    {interface} at the endpoint {endpoint}, with the token {token}, and asks for {target}.
+  distractors:
+    - Each tenant has a collection with the same path and an artifact with the same identifier and the same checksum.
+  oracle:
+    - if: {token: none}
+      then: {outcome: refused-no-token}
+    - if: {endpoint: other-tenant}
+      then: {outcome: refused-wrong-audience}
+    - if: {target: id-of-other-tenant}
+      then: {outcome: not-found}
+    - else: {outcome: own-data-only}
+  checks:
+    - outcome: own-data-only
+      check: Each entity in the answer through {interface} belongs to the tenant of the user.
+    - outcome: own-data-only
+      check: The answer has the artifact of the own tenant one time, and not the artifact of the other tenant with the same identifier.
+    - outcome: not-found
+      check: The answer is the same as the answer for an ID that does not exist, with status, body and time.
+    - outcome: [refused-no-token, refused-wrong-audience]
+      check: mudcat returns no data.
+    - outcome: refused-wrong-audience
+      check: The refusal is because the audience of the token is not the tenant of the endpoint.
+    - outcome: refused-wrong-audience
+      when: {target: id-of-other-tenant}
+      check: The refusal is the same as the refusal for a request for own data.
+  invariants: [INV-6, INV-7]
+  verifies: [OP-8, OP-12, OP-13, ID-11, ID-12, EV-6]
+  reference: UC5-01
+
+- id: T5.2
+  use_case: 5
+  name: embargo
+  goal: Read a dataset that has an embargo date.
+  axes:
+    time: [before-end, after-end]
+    actor: [group-member, signed-in-outsider, anonymous]
+    data: [in-doi-snapshot, not-in-doi-snapshot]
+  fixture: >
+    A dataset of a group with an embargo date. After that date, the policy lets each signed-in user
+    read the dataset. One published snapshot has a DOI and is public. The request is {time} of the
+    embargo. The actor is {actor}, and asks for data that is {data}.
+  oracle:
+    - if: {actor: group-member}
+      then: {outcome: readable}
+    - if: {data: in-doi-snapshot}
+      then: {outcome: readable}
+    - if: {time: after-end, actor: signed-in-outsider}
+      then: {outcome: readable}
+    - else: {outcome: denied}
+  checks:
+    - outcome: readable
+      check: mudcat issues a plan and credentials for the data.
+    - outcome: readable
+      when: {actor: [signed-in-outsider, anonymous], data: in-doi-snapshot}
+      check: The plan covers the members of the DOI snapshot only.
+    - outcome: denied
+      check: mudcat issues no credentials.
+    - outcome: denied
+      check: The actor sees of the dataset only what the data policy shows to that actor.
+    - when: {time: after-end}
+      check: No batch job changed a record at the end of the embargo.
+  invariants: [INV-9]
+  verifies: [AC-1, ID-8, UP-13]
+  reference: UC5-02
+
+- id: T5.3
+  use_case: 5
+  name: membership-source
+  goal: The access of a person follows the membership of a team in an outside service.
+  axes:
+    event: [member-added, member-removed, provider-down-short, provider-down-long]
+    grant: [through-team, direct]
+  cover:
+    path: [resolve, search]
+  fixture: >
+    A group with a membership source, which is a team in an outside service. The limit for the age of
+    synchronised membership is 24 hours. Event: {event}. Short is 1 hour, long is 25 hours.
+    The person has access to a dataset {grant}, and makes a request through {path}.
+  oracle:
+    - if: {grant: direct}
+      then: {outcome: access}
+    - if: {event: [member-added, provider-down-short]}
+      then: {outcome: access}
+    - else: {outcome: denied}
+  checks:
+    - outcome: access
+      check: The request succeeds.
+    - outcome: access
+      when: {event: provider-down-short, grant: through-team}
+      check: The decision record states the age of the membership that mudcat used.
+    - outcome: denied
+      check: mudcat denies the request, and the audit log has the denial.
+    - outcome: denied
+      when: {event: provider-down-long}
+      check: The denial states that the membership is older than the limit.
+    - when: {event: member-removed, grant: direct}
+      check: The direct grant still works, and the person is not in the group.
+  invariants: [INV-9, INV-11]
+  verifies: [AC-1, AC-6, AC-7]
+  reference: UC5-04
+
+- id: T5.4
+  use_case: 5
+  name: tenant-move
+  goal: Move a tenant from the shared tier to its own database. Clients see no difference.
+  axes:
+    fault: [none, fails-at-one-half]
+    consumer: [none, at-a-position]
+    writes: [none, during-the-move]
+  cover:
+    versions: [1000, 5000000]
+  fixture: >
+    A tenant in the shared tier with {versions} versions. A consumer of its change stream:
+    {consumer}. Writes by clients of the tenant: {writes}. The operator moves the tenant to a
+    dedicated database. Fault: {fault}.
+  oracle:
+    - if: {fault: none}
+      then: {outcome: moved}
+    - else: {outcome: stays}
+  checks:
+    - check: Each record has the same key and the same ID as before.
+    - check: Each published snapshot has the same Merkle hash as before.
+    - check: The endpoint of the tenant did not change.
+    - check: Other tenants in the shared tier see no change.
+    - when: {writes: during-the-move}
+      check: Each write that mudcat accepted is in the tenant one time. Each write that mudcat did not accept got an error that lets the client try again.
+    - outcome: moved
+      check: No row of the tenant stays in the shared tier.
+    - outcome: moved
+      when: {consumer: at-a-position}
+      check: The consumer continues from its position with no gap and no event out of order.
+    - outcome: stays
+      check: The tenant has all its data in the shared tier and accepts writes again.
+    - outcome: stays
+      check: The dedicated database shows no part of the tenant.
+    - outcome: stays
+      when: {consumer: at-a-position}
+      check: The consumer sees no event of the move that failed.
+  invariants: [INV-2, INV-5, INV-6]
+  verifies: [OP-7, OP-13, OP-14, ID-12, EV-13]
+  reference: UC5-05

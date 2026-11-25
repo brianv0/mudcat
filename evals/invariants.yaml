@@ -1,0 +1,83 @@
+# Invariants: statements that are true after every step of every eval.
+# A runner checks each invariant after each action, in every task variant
+# and in every random sequence of actions.
+
+- id: INV-1
+  statement: mudcat transfers no data bytes when a client reads data.
+  observe: The network record of the read shows connections from the client to storage only.
+  verifies: [RD-1]
+
+- id: INV-2
+  statement: A published snapshot never changes its members or its Merkle hash.
+  observe: Compare the members and the hash of each published snapshot with their values at publication.
+  verifies: [ID-3, ID-5, UP-10, OP-6]
+
+- id: INV-3
+  statement: Invalidated content is never in a resolution, a plan or a search result.
+  observe: For each resolution, plan and result list made after an invalidation, look for the invalidated IDs and fingerprints.
+  verifies: [UP-9, EV-11]
+
+- id: INV-4
+  statement: A resolution names the exact version or snapshot of each input.
+  observe: No input of a resolution is a ref, a path or the word latest.
+  verifies: [UP-3]
+
+- id: INV-5
+  statement: The change stream has exactly one event for each committed change, no event for a change that did not commit, and positions in commit order.
+  observe: Compare the stream of a consumer with the list of commits. Look for a position lower than an earlier one.
+  verifies: [EV-1, EV-3, EV-13]
+
+- id: INV-6
+  statement: A request returns only the data of its own tenant, unless an explicit grant between tenants applies.
+  observe: Each ID in each answer belongs to the tenant of the request or to a recorded grant between tenants.
+  verifies: [OP-8, ID-12]
+
+- id: INV-7
+  statement: The answer for an ID of another tenant is the same as the answer for an ID that does not exist.
+  observe: Compare the two answers, with status, body and time.
+  verifies: [OP-8]
+
+- id: INV-8
+  statement: A replica has the state verified only after a successful comparison of checksums.
+  observe: Each replica with the state verified has a verification record with a checksum that agrees with the version.
+  verifies: [ID-4, PL-1]
+
+- id: INV-9
+  statement: Each access decision at an enforcement point is in the audit log.
+  observe: Count the decisions at registration, resolution, materialisation, export and deletion, and compare with the audit log.
+  verifies: [AC-8]
+
+- id: INV-10
+  statement: mudcat removes no version and no manifest that a reference in any tenant names.
+  observe: After each removal, look for references with no target.
+  verifies: [OP-15]
+
+- id: INV-11
+  statement: After a grant is removed, each check that starts later is denied the access that the grant gave.
+  observe: Make the same request directly after each revocation.
+  verifies: [AC-7]
+
+- id: INV-12
+  statement: mudcat does not purge or erase content that a legal hold covers.
+  observe: The bytes and the records of held content exist after each purge and erase request.
+  verifies: [UP-8]
+
+- id: INV-13
+  statement: A second registration of the same artifact with the same checksum makes no new version and no new event.
+  observe: Register each artifact two times, and count versions and events.
+  verifies: [OP-5]
+
+- id: INV-14
+  statement: A permitted resolution contains no element whose source does not grant the action and the purpose of the request.
+  observe: For each element of each permitted resolution, look up the grants of its source at the time of the decision.
+  verifies: [UP-2, UP-15]
+
+- id: INV-15
+  statement: Credentials with the scope of a prefix cover no object outside one ACL root that the caller can read.
+  observe: List the objects under the prefix of each credential, and check the access of the caller to each.
+  verifies: [RD-3]
+
+- id: INV-16
+  statement: A derived index that is dropped and built again has the same content as before.
+  observe: Compare the documents of the index before the drop and after the rebuild.
+  verifies: [OP-2]
