@@ -13,6 +13,8 @@ Field-specific semantics, profiles and examples are in [fields.md](fields.md).
 | `prov:` | W3C PROV-O | Entities, activities, agents, usage, derivation, invalidation |
 | `dcat:` | W3C DCAT 3 | Datasets, dataset series, versions, distributions, data services |
 | `csvw:` | W3C CSV on the Web | Record (tabular) structure: tables, columns, datatypes, keys |
+| `schema:` | Schema.org | The public description of a dataset: name, description, creator, licence, coverage, distribution |
+| `cr:` | MLCommons Croissant 1.1 | Files, record sets and fields in the description of a dataset for ML tools |
 | `odrl:` | W3C ODRL 2.2 | Terms of use as received and published (licences, contracts, opt-out policies) |
 | `oa:` | W3C Web Annotation | Selectors into parts of a resource |
 | `dcterms:` | Dublin Core terms | Titles, descriptions, licences, dates, creators |
@@ -129,6 +131,32 @@ These concepts come from iRODS and Datacat. The placement concepts come from Ruc
 - Attributes: jurisdiction, storage class (with tape and cache tiers), protocols, egress cost, and if data can leave the resource at all. The catalog also permits arbitrary attributes, so that Rucio-style expressions can address them.
 - An optional deterministic path function maps a version to its path on the resource.
 - Access endpoints are `dcat:DataService` nodes.
+
+**Management mode.** Each storage resource has a management mode. The mode tells who puts data on the resource and who can remove it. Unity Catalog makes the same distinction between managed and external volumes.
+
+| Mode | Who writes the bytes | How entries come into the catalog | Who removes the bytes |
+|---|---|---|---|
+| `managed` | Clients, at paths that mudcat allocates | Registration is part of the write | mudcat |
+| `external` | The owner, with any tool, at any path | The owner registers them, or a site agent discovers them | mudcat, only where the owner permits it |
+| `reference` | A party outside the tenant, on storage that mudcat cannot change | Import of a published description (section 4) | Nobody in the tenant |
+
+**Declared and discovered entries.** An entry is **declared** when a client registers it. An entry is **discovered** when a site agent finds it on external storage and nobody registered it. Each artifact records which of the two it is (`mc:registrationOrigin`). Discovery follows Google's Goods system: the catalog collects metadata after the data exists, and the owners of the data do not change how they work.
+
+- **Discovery.** A site agent reads storage inventories and event notifications. For each object that no replica describes, it makes an artifact, a version and a replica. Discovery is idempotent on the storage resource, the path, and the version ID of the storage provider or the checksum.
+- **Grouping rules.** A storage resource can have rules that turn parts of a path into structure. Goods groups paths by the same parts. Without rules, each object is one artifact.
+
+  | Part of the path | Becomes |
+  |---|---|
+  | A date or a time | One member for each value, in a discovered dataset |
+  | A version label | A version of one artifact |
+  | The name of a site, a region or a host | A replica, but only if the checksums agree |
+  | A shard index | One artifact with many parts |
+
+- **Inferred metadata.** Enrichers compute the metadata of discovered entries. Each value has the assertion origin of its enricher (section 3). Some inferences are not certain, for example the schema of a file that does not describe itself. Then the payload keeps each candidate with a score.
+- **Propagation in a discovered dataset.** Enrichers examine a sample of the members. For the other members, mudcat shows the result as **propagated**, and computes it at the time of the request. It does not store a propagated value as if an enricher had examined that member.
+- **Order of work.** Enrichers do not examine all discovered entries at the same time. They first take the entries that have metadata from a person, many uses, or many dependents in lineage.
+- **No source, no governed use.** A discovered version has the source type `mc:UnknownSource`, which grants nothing. A reader can find the version and see its metadata, subject to access control. But mudcat refuses each action that needs a usage grant, such as `mc:train`. An owner **claims** a discovered artifact: the owner assigns a source and a description. The artifact is then declared.
+- **Limits.** A person with direct access to external storage can read the data without mudcat. For such data, usage policy is a record and an audit. It is not a prevention.
 
 **Resolution options.** A request for a name can state a version and a place:
 
@@ -389,6 +417,79 @@ Four rules keep statistics safe to use:
 
 Hints inherit down collections, as tags do.
 
+### Lifetime and use
+
+Not all data is kept for the same time. In Google's Goods catalog, more than 5% of the entries were removed each day and as many were added. Most of them were intermediate results. A study of 3000 production ML pipelines at Google found that about 80% of the trained models were never deployed.
+
+Each artifact and each dataset has a **lifetime class** (`mc:lifetimeClass`):
+
+| Class | Meaning | End of its lifetime |
+|---|---|---|
+| `durable` | Data that someone means to keep. This is the default | A person removes it, or a duty of its source does |
+| `intermediate` | An output of an activity that only later steps of the same pipeline use | mudcat purges the bytes after a time to live |
+| `cache` | A copy that mudcat or a job can make again: a representation, a materialisation, training shards | mudcat purges the bytes when no replication rule locks them |
+
+The rules:
+
+- **The record outlives the bytes.** The end of a lifetime is a purge, not an erasure (section 5). The record stays as a **stub**: the ID, the content checksum, the size, the structure descriptor, the statistics and the provenance relations. Thus lineage through an intermediate stays complete, and mudcat can recognise the same content if it comes back. Goods reports that provenance through removed files cannot be computed again.
+- **Stubs can be compacted.** A pipeline that runs each hour makes many stubs. mudcat can replace the stubs of one run with a summary on the activity and a direct derivation between the inputs and the outputs that remain. The summary gives the number and the total size of the intermediates. The direct derivation records the number of steps that it replaces.
+- **Policy follows derivation.** An intermediate or a cache has the sources, the tags and the duties of its inputs. An invalidation or a purge of an input also applies to each intermediate and each cache that derives from it. The terms of a source still apply to a training set that nobody uses.
+- **No copies for reproduction.** A job does not need its own copy of its inputs to be reproducible. A resolution names exact, immutable versions, so a later job reads the same data. The pipelines in the study used about 22% of their compute for the ingestion of data, in many cases for such copies.
+
+**Use record.** mudcat derives a summary of use for each snapshot, artifact and model, from the resolutions and the provenance relations:
+
+- the number of resolutions for each action, and the time of the last one;
+- the activities that used it, and their outputs;
+- **onward use:** if some output of those activities was itself used or deployed. mudcat follows this chain to its end.
+
+A **deployment** (`mc:Deployment`, subclass of `prov:Activity`) records that a model version went into service outside the pipeline that made it. Without this record, mudcat cannot tell a model that serves users from a model that nobody used.
+
+**Abandoned data** is data with no resolution and no onward use for a period that the tenant sets, and with no ref, replication rule, legal hold or DOI that protects it. Abandoned is a derived state. It is not a status that a person sets.
+
+- mudcat reports abandoned data with its size, its storage resources, its sources and the duties that still apply.
+- A retention rule can purge abandoned data of the classes `intermediate` and `cache`.
+- For `durable` data, a person makes the decision, and mudcat records it.
+- Typical cases are a curated training set whose models were never deployed, the shards of a run that failed, and an evaluation result for a model that was withdrawn.
+
+### Public description
+
+mudcat describes each dataset and each published snapshot in the vocabularies that dataset search engines and ML tools read: Schema.org `Dataset`, DCAT 3 and Croissant 1.1. The description is not a second copy of the metadata. mudcat generates it from the model.
+
+**Descriptive attributes.** The built-in namespace `describe` holds the attributes that a person writes for a reader. Their names are the Schema.org property names: `name`, `description`, `alternateName`, `keywords`, `creator`, `publisher`, `funder`, `citation`, `license`, `isAccessibleForFree`, `measurementTechnique`. The other properties come from the model:
+
+| In the description | Schema.org | DCAT 3 | Croissant 1.1 | From mudcat |
+|---|---|---|---|---|
+| The catalog | `schema:DataCatalog`, `includedInDataCatalog` | `dcat:Catalog` | — | The tenant, or a public collection of the tenant |
+| The dataset | `schema:Dataset` | `dcat:Dataset` | `schema:Dataset` with `dct:conformsTo` | A dataset at its newest published snapshot |
+| One version | `version` | `dcat:version`, `dcat:hasVersion`, `dcat:previousVersion` | `version` | A published snapshot and its tag ref |
+| A dataset that grows | `isPartOf` a series | `dcat:DatasetSeries`, `dcat:inSeries` | `cr:isLiveDataset` | A dataset whose branch ref receives appends |
+| Persistent names | `identifier`, `sameAs`, `url` | `dcterms:identifier`, `dcat:landingPage` | `url`, `cr:citeAs` | Identifiers (DOI, compact identifier) and the landing page |
+| A form to download | `distribution`, a `schema:DataDownload` with `contentUrl`, `encodingFormat` and `contentSize` | `dcat:Distribution`, `spdx:checksum` | `cr:FileObject` with `sha256`, `cr:FileSet` | A representation, its versions and their checksums |
+| The structure | `variableMeasured`, a `schema:PropertyValue` | CSVW | `cr:RecordSet`, `cr:Field` | The structure descriptor and its fields, with units |
+| Coverage in time and space | `temporalCoverage`, `spatialCoverage` | `dcterms:temporal`, `dcterms:spatial` | As Schema.org | Snapshot statistics over time fields and coordinate fields |
+| Dates | `datePublished`, `dateModified` | `dcterms:issued`, `dcterms:modified` | `datePublished` | The time of publication and the time of the commit |
+| Terms of use | `license`, `usageInfo`, `isAccessibleForFree` | `dcterms:license`, `dcterms:accessRights`, `odrl:hasPolicy` | `license`, and `usageInfo` with an `odrl:Offer` | The terms of the sources (section 5) |
+| Origin | `isBasedOn`, and `sameAs` for a copy | `prov:wasGeneratedBy`, `prov:wasDerivedFrom` | `prov:wasGeneratedBy`, `prov:wasDerivedFrom` | Provenance (section 6), at the level of datasets |
+| People and organisations | `creator`, `publisher`, `funder`, with ORCID and ROR as `sameAs` | `dcterms:creator`, `dcterms:publisher` | `creator` | Agents and their identifiers |
+
+The rules:
+
+- **Conformance levels.** mudcat reports which level each description reaches, and which properties it lacks for the next level.
+
+  | Level | Needs |
+  |---|---|
+  | Search | A `name`, and a `description` of 50 to 5000 characters. Google Dataset Search needs these two properties |
+  | Croissant | Also `license`, `url`, `creator` and `datePublished`. Croissant needs these properties |
+  | Complete | Also each property that Google recommends and that mudcat can compute: identifier, keywords, coverage, variables, version and distribution |
+
+  Inside a tenant, a snapshot can be published at any level. A snapshot that becomes public must reach the level Search.
+- **Text limits.** Search engines use only the first 5000 characters of a text property. mudcat rejects a longer text in the `describe` namespace.
+- **One description, many forms.** mudcat serves the same description as JSON-LD in the landing page of the dataset, as a DCAT record, as a Croissant file and as a DataCite record.
+- **Copies and derivations.** A copy of a dataset that another catalog publishes has `sameAs` with the canonical address of the original. A dataset that changes or combines other datasets has `isBasedOn`. Google's guidelines separate these two cases in the same way.
+- **Only what the reader can see.** mudcat generates a description with the permissions of the reader. A public description contains only what an anonymous reader can see.
+- **Import.** mudcat also reads the three vocabularies. A description from another repository becomes a dataset on a `reference` storage resource. Its payloads have the assertion origin `imported`, and its source is an `mc:ExternalSource`. Thus the public datasets that a team uses are in the same catalog and the same lineage as its own data.
+- **Limits of Schema.org.** Schema.org has no structure below the file, no immutable versions and little provenance. Google's guidelines call their own advice on provenance and versions an initial outline. Croissant 1.1 adds PROV-O relations and ODRL offers. mudcat thus puts a summary in the Schema.org form, and the full record in the DCAT and Croissant forms.
+
 ## 5. Sources, access control and usage policy
 
 ### Sources
@@ -405,6 +506,7 @@ A **source** (`mc:Source`, subclass of `prov:Entity`) records where data origina
 | `mc:InstrumentSource` | Instrument and its calibration, protocol version, batch, planned versus executed procedure |
 | `mc:ComputedSource` | Method record (section 6), code version |
 | `mc:ExternalSource` | Enclave or federated partner, access conditions; possibly no reachable replica |
+| `mc:UnknownSource` | Nothing. A discovered version has this source until an owner claims it (section 1). It grants no action |
 
 ### Access control
 
@@ -558,6 +660,13 @@ A reader can resolve a dataset, an artifact or an identifier "as of" a time T. F
 
 ## 6. Provenance
 
+**Provenance and lineage.** mudcat uses the two words for two different things:
+
+- **Provenance** is the record: the entities, the activities and the agents, and the relations between them. It includes where data came from (its source), who acted, with what method and in what role. W3C PROV uses the word in this sense.
+- **Lineage** is one view of that record: the graph of which entity depends on which, upstream and downstream. A lineage query walks this graph.
+
+mudcat stores provenance and answers lineage queries. Tools that use the word "lineage", such as OpenLineage, Unity Catalog and DataHub, record the dependency graph between datasets and jobs. That graph is a part of provenance, and mudcat imports it as provenance.
+
 Provenance uses PROV-O directly.
 
 **Entities** are versions, snapshots, annotation sets, representations, resolutions, models and evaluation results.
@@ -590,6 +699,16 @@ A role can carry the mark **ubiquitous** (calibration, tokenizer, base model), a
 
 **Plans.** Protocols and pipelines are `prov:Plan`s. `prov:qualifiedAssociation` and `prov:hadPlan` link them.
 
+**Pipelines and runs.** A **pipeline** (`mc:Pipeline`, subclass of `prov:Plan`) is a process that runs many times, for example each hour on new data. Each run has a run ID, and each activity records its pipeline and its run.
+
+The provenance of a pipeline that runs for months is one large connected graph: runs share inputs, and one model is the start point for the next. The Google study found pipelines with up to 6900 nodes. A reader cannot use this graph directly. mudcat thus gives a **run view** for one output, usually a model version. The study calls this view a model graphlet. The view contains:
+
+- the ancestor activities of the output, with their inputs and outputs;
+- the analysis and validation activities on those inputs;
+- the descendant activities of the output that do not lead to another training activity, for example its evaluation and its deployment.
+
+A use of an earlier model as a start point is the border of the view, and is not followed.
+
 **Method records** (`mc:Method`) describe, as structured attributes, how someone measured or computed a value:
 
 - for a computation: the measurement or computation method with its parameters, convergence criteria, code;
@@ -604,6 +723,7 @@ A combination of values from different methods needs a declared equivalence (`mc
 - `observed`: inferred from credentials mudcat issued during the run;
 - `declared`: reported by the client SDK;
 - `imported`: received as OpenLineage events or from an experiment tracker.
+- `inferred`: derived by an enricher from the access logs of storage or from the logs of a job scheduler, for discovered data. An inferred relation can come from a sample of the logs, and it has a confidence.
 
 Manifest columns carry **element-level lineage**: parent element IDs, or a parent selector for arrays and streams.
 
@@ -681,3 +801,6 @@ External movers do the transfers. mudcat records the requests and their outcomes
 - **Snapshot hashing.** How mudcat canonicalises the snapshot hash: member order, and if the hash includes annotation sets.
 - **Sample identity across rules.** If sample rules for arrays should produce stable sample identifiers, or if selectors are enough.
 - **Model representation.** If a model is an artifact, a dataset of checkpoints, or both.
+- **Splits.** Croissant describes the training, validation and test parts of a dataset as splits. mudcat records a role on each use, not parts of a dataset. If a dataset can declare its splits is open.
+- **Compaction of stubs.** At what volume mudcat compacts the stubs of intermediates, and if it can expand a compacted run again from the run record.
+- **Period for abandoned data.** The default period for each lifetime class.

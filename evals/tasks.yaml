@@ -142,6 +142,55 @@
   verifies: [PL-1, PL-2, RD-4, QY-4]
   reference: UC1-03
 
+- id: T1.4
+  use_case: 1
+  name: end-of-lifetime
+  goal: Keep storage small. Remove the bytes of intermediates and caches of a curation pipeline, and lose no lineage.
+  axes:
+    class: [intermediate, cache]
+    event: [lifetime-ends, input-invalidated]
+    lock: [none, replication-rule]
+  cover:
+    runs: [1, 500]
+  fixture: >
+    A pipeline made {runs} runs. Each run made a durable output from a durable input, through an
+    artifact of the lifetime class {class}. Lock on that artifact: {lock}. Then the event {event} occurs.
+  distractors:
+    - A durable artifact in the same collection has the same age and no lock.
+  oracle:
+    - if: {event: input-invalidated}
+      then: {outcome: invalidated-with-input}
+    - if: {lock: replication-rule}
+      then: {outcome: kept}
+    - else: {outcome: bytes-purged-stub-kept}
+  checks:
+    - check: The durable artifact in the same collection has its bytes and resolves as before.
+    - check: A lineage query from the durable output returns the durable input, through the artifact of the class {class}.
+    - outcome: bytes-purged-stub-kept
+      check: Each replica of the artifact has a deletion receipt.
+    - outcome: bytes-purged-stub-kept
+      check: The catalog record has the ID, the content checksum, the size and the statistics of the artifact.
+    - outcome: bytes-purged-stub-kept
+      check: A resolution of the artifact fails with an error that states that the lifetime ended.
+    - outcome: bytes-purged-stub-kept
+      when: {class: cache}
+      check: A new request for the same representation makes it again, and the new copy has the same content checksum.
+    - outcome: bytes-purged-stub-kept
+      when: {class: intermediate}
+      check: mudcat does not run the pipeline again to make the artifact.
+    - outcome: kept
+      check: The bytes exist, and the answer to a purge request names the replication rule.
+    - outcome: invalidated-with-input
+      check: The artifact does not resolve for a normal user, and its invalidation record names the input.
+    - outcome: invalidated-with-input
+      when: {lock: replication-rule}
+      check: The replication rule does not stop the invalidation.
+    - outcome: invalidated-with-input
+      check: The durable output has a flag with the number of affected elements.
+  invariants: [INV-3, INV-10, INV-17]
+  verifies: [PR-8, PL-7, UP-17, UP-9]
+  reference: UC1-03
+
 # ---------------------------------------------------------------- use case 2
 
 - id: T2.1
@@ -628,3 +677,44 @@
   invariants: [INV-2, INV-5, INV-6]
   verifies: [OP-7, OP-13, OP-14, ID-12, EV-13]
   reference: UC5-05
+
+- id: T5.5
+  use_case: 5
+  name: discovered-data
+  goal: Find and use data that a group put on its own storage and did not register.
+  axes:
+    origin: [declared, discovered, discovered-then-claimed]
+    request: [search, read, train]
+  cover:
+    files: [20, 200000]
+  fixture: >
+    An external storage resource of a group, with discovery on, holds {files} files under one prefix.
+    Their state in the catalog is {origin}. With discovered-then-claimed, an owner assigned a source
+    that grants train for research. A member of the group makes the request {request} for research.
+  distractors:
+    - A second prefix on the same storage resource has discovery off.
+  oracle:
+    - if: {origin: discovered, request: train}
+      then: {outcome: refused-unknown-source}
+    - if: {request: search}
+      then: {outcome: found}
+    - else: {outcome: resolved}
+  checks:
+    - check: No file under the second prefix has an entry in the catalog.
+    - check: Each of the {files} files has one artifact, or is a part of one artifact, and no file has two.
+    - when: {origin: [discovered, discovered-then-claimed]}
+      check: Each artifact records that a site agent discovered it.
+    - when: {origin: discovered}
+      check: Each metadata value has an enricher as its assertion origin, and no value has a person as its origin.
+    - outcome: found
+      when: {origin: discovered}
+      check: The result shows which values an enricher computed for the entry, and which values are propagated.
+    - outcome: resolved
+      check: mudcat issues a plan, and the resolution names exact versions.
+    - outcome: refused-unknown-source
+      check: The error states that the source is unknown, and gives the number of versions with no source.
+    - outcome: refused-unknown-source
+      check: mudcat issues no plan and no credentials, and the audit log has the decision.
+  invariants: [INV-4, INV-9, INV-13, INV-14]
+  verifies: [ST-18, ST-20, UP-16, PL-8, OP-5]
+  reference: UC5-01

@@ -41,7 +41,7 @@ clients: "Clients\nPython SDK · CLI · web UI · data loaders · notebooks · a
 
 instance: mudcat instance {
   gateway: "API gateway (OIDC, tokens)"
-  gateways: "Gateways\nIceberg REST · DCAT, Croissant, RO-Crate export · MCP server\nfsspec · federation feed · field gateways (fields.md)"
+  gateways: "Gateways\nIceberg REST · public catalog (Schema.org) · DCAT, Croissant, RO-Crate · MCP server\nfsspec · federation feed · field gateways (fields.md)"
 
   services: Services {
     grid-columns: 3
@@ -128,6 +128,7 @@ A recursive query over all provenance relations does not scale. mudcat uses thes
 - **A lineage summary for common questions.** Each entity keeps its root sources and the activity that produced it as indexed columns. A background worker updates them from the change stream. "Everything that comes from source X" is then an index lookup, not a traversal. The summary is a derived index.
 - **Ancestor table where it is small enough.** For datasets and snapshots, a background worker also keeps a table of all (ancestor, descendant) pairs. mudcat does not keep this table for artifacts and versions, where it would grow too large.
 - **Long traversals run as jobs.** A traversal that cannot finish in the time limit of a request runs as a background job, and the client gets the result later.
+- **The run view is a bounded traversal.** The run view of a model version (model, section 6) stops at other training activities. Thus its size depends on one run, and not on the age of the pipeline.
 
 ### Performance of policy predicates
 
@@ -227,6 +228,7 @@ Agent tasks:
 - **Deletion,** with a receipt per replica.
 - **Transfers,** which agents hand to movers.
 - **Consistency checks.** Agents compare storage inventories with the replica records, to find dark data (files that no replica describes) and lost replicas.
+- **Discovery.** On an external storage resource with discovery on, an agent makes a discovered entry for each file that no replica describes (model, section 1). It applies the grouping rules of the storage resource. It also reads the access logs of the storage, where they exist, and reports which job read or wrote which object.
 - **Data compaction and rewrites,** when the maintenance section below assigns them to the site.
 
 Agents report results through the ingest writer.
@@ -247,6 +249,8 @@ The runtime:
 - **Writes.** Enrichers write their outputs through the ingest writer, into their own namespaces.
 - **Review.** Outputs that need review go into a review queue in the web UI, with their status `proposed`.
 - **Recomputation.** A new enricher version starts a background recomputation of its outputs. The old outputs stay visible until the new ones are complete.
+- **Status records.** For each entity and each enricher, the runtime keeps the time, the result and the error of the last run. An enricher that needs the output of another enricher reads this record, and waits until that output exists. It runs again when that output changes. Goods coordinates its analysis modules in the same way, with no central schedule of dependencies. The records also answer questions about operation, for example which part of a collection an enricher has processed.
+- **Order of work.** The queue for discovered entries has an order of importance: entries with metadata from a person, with many resolutions or with many dependents come first. A second queue goes through all entries more slowly. Goods runs its most expensive analysis in the same two ways.
 - **Costs.** Each run records its compute time, so that the vendor of a hosted service can charge for enrichment separately.
 
 ### Resolver
@@ -486,6 +490,7 @@ Adapters translate external records into activities and qualified relations, and
 - MLflow and Weights & Biases runs;
 - Nextflow and Snakemake provenance;
 - Hugging Face revisions.
+- access logs of storage and logs of job schedulers, for discovered data. Relations from these logs have the mark `inferred`, not `imported`.
 
 The adapters match the names that external tools use through identifiers. If an adapter cannot match an event, the event creates a placeholder entity. mudcat reconciles this entity later.
 
@@ -525,6 +530,9 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 | Compact small data files into larger shards; rewrite files to drop purged content | Bytes on a storage resource | A transform activity that site agents or external compute run |
 | Maintain registered external tables (Iceberg, Delta, Lance) | The table's own files | Delegated to the table's engine; mudcat records the new table snapshot |
 | Remove bytes for a takedown or expiry | Bytes on a storage resource | Deletion workflow, through site agents |
+| Purge the bytes of intermediates and caches at the end of their lifetime, and keep the stub | Bytes on a storage resource; catalog database | Deletion workflow, through site agents |
+| Compact the stubs of old pipeline runs | Catalog database | Catalog maintenance |
+| Compute use records and the list of abandoned data | Catalog database | Catalog maintenance, from the change stream |
 
 **Compaction of data files is not invisible in mudcat.** In Iceberg, compaction replaces data files under the same logical table, and readers do not see a change. In mudcat, files are immutable versions with checksums, replicas and lineage. Thus compaction is a transform activity:
 
@@ -539,7 +547,8 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 
 - **Iceberg REST catalog** for records-structured datasets. With it, Spark, Trino, DuckDB and PyIceberg can read these datasets by name. The gateway also vends credentials. Optionally, the gateway can also show the manifest of any snapshot as an Iceberg table, so that these engines can query elements and their metadata. To do this, the gateway generates Iceberg metadata from mudcat's manifests. mudcat does not store its own state in Iceberg metadata files.
 - **Field gateways:** optional gateways that a field profile defines, listed in [fields.md](fields.md). They generate service metadata from CSVW descriptions through community schema profiles that are registered as plugins.
-- **Metadata export:** DCAT, Croissant 1.1, RO-Crate and DataCite, generated from the model for publication and citation.
+- **Public catalog:** a landing page for each public dataset, with its Schema.org description as JSON-LD in the page, and a sitemap of these pages. Dataset search engines read these two things. The gateway serves only what an anonymous reader can see.
+- **Metadata export and import:** DCAT 3, Croissant 1.1, RO-Crate and DataCite, generated from the model for publication and citation (model, section 4, public description). The gateway also imports Schema.org, DCAT and Croissant descriptions from other repositories as datasets on reference storage.
 - **AI governance export:** SPDX 3 AI and Dataset profiles, and training-content summaries generated from the resolutions that training runs used.
 - **MCP server** for agents. It runs with the caller's identity and permissions. Its tools:
   - search;

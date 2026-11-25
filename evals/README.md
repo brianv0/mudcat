@@ -4,8 +4,8 @@ Status: definitions only. There is no mudcat implementation yet, and no runner. 
 
 | Layer | File | Content |
 |---|---|---|
-| Invariants | [invariants.yaml](invariants.yaml) | 16 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 15 tasks with variation. `generate.py` expands them into 280 variants |
+| Invariants | [invariants.yaml](invariants.yaml) | 17 statements that are true after each step of each eval |
+| Task templates | [tasks.yaml](tasks.yaml) | 17 tasks with variation. `generate.py` expands them into 300 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 31 fixed sequences of actions, which show one possible path through a task |
 
 Run `python3 evals/check.py` from the repository root. It validates the three layers, and prints the coverage and the gaps.
@@ -62,6 +62,7 @@ These rules make a task effective:
 | T1.1 resolve-and-read | Get the data of a dataset for a training job | structure, storage mode, invalidated members | number of members | 30 |
 | T1.2 concurrent-commits | Many writers change one branch, and no change is lost | kind of change, overlap of members | number of writers | 7 |
 | T1.3 stage-near-compute | Have a verified copy near the cluster, then resolve there | fault in the transfer, place option | kind of target, number of members | 12 |
+| T1.4 end-of-lifetime | Remove the bytes of intermediates and caches, and lose no lineage | lifetime class, event, lock | number of runs | 10 |
 | T2.1 combine-methods | Publish one dataset from two | methods, declared equivalence, step | | 8 |
 | T2.2 leakage-check | Find out if test data is related to training inputs | criterion, number of related elements | | 12 |
 | T2.3 reproduce-later | Get the training inputs again after one year | change since the first resolution | | 7 |
@@ -74,8 +75,9 @@ These rules make a task effective:
 | T5.2 embargo | Read a dataset that has an embargo date | time, actor, data in a DOI snapshot or not | | 12 |
 | T5.3 membership-source | Access follows the membership of an outside team | event, kind of grant | kind of request | 9 |
 | T5.4 tenant-move | Move a tenant to its own database | fault, consumer, writes during the move | number of versions | 8 |
+| T5.5 discovered-data | Find and use data that nobody registered | origin of the entry, kind of request | number of files | 10 |
 
-Variants for each use case: 49, 27, 120, 27 and 57.
+Variants for each use case: 59, 27, 120, 27 and 67.
 
 `generate.py` has these options:
 
@@ -145,7 +147,7 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A legal hold blocks purge and erasure, but not invalidation.
   - A resolution with a strict place option fails when the copy near the cluster is not complete.
   - A summary of training content states which runs have no resolution.
-- The tasks and the invariants cover 63 of the 128 requirements. Requirements for performance and for federation have no task yet.
+- The tasks and the invariants cover 70 of the 148 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 

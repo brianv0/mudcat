@@ -76,6 +76,10 @@ Identifier prefixes:
 | ST-15 | mudcat shall hide an enricher output that needs review until a person accepts it. | AI-generated descriptions and classifications can be wrong. | T |
 | ST-16 | mudcat shall run enrichers from third parties only in site agents or in the customer gateway. | Third-party code must not run in the control plane, and must run under the customer's grants. | I |
 | ST-17 | mudcat shall apply a tag on a collection to each entity under it that does not set another value of that tag. | Classification of a whole collection must not need a write to each object. | T |
+| ST-18 | mudcat shall record for each artifact if a client declared it or a site agent discovered it. | Discovered entries have inferred metadata and no owner, and users must be able to tell them apart; Goods builds its catalog in this way. | T |
+| ST-19 | When an enricher cannot decide between values of an attribute, mudcat shall store each candidate value with its score. | Inference on data that does not describe itself is not certain; Goods keeps each candidate schema with a score. | T |
+| ST-20 | mudcat shall mark as propagated each metadata value that it shows for an entity that no enricher examined. | Users must tell a value that came from analysis of the entity from a value that came from other members of its dataset. | T |
+| ST-21 | mudcat shall record, for each entity and each enricher, the time, the result and the error of the last run. | Enrichers coordinate through these records, and operators find failures with them; Goods uses the same mechanism. | T |
 
 ## Provenance
 
@@ -88,6 +92,11 @@ Identifier prefixes:
 | PR-5 | mudcat shall store the full record of a run as a catalogued version and keep a summary of its relations in the catalog database. | The Butler moved provenance into files to make schema changes easier. | I |
 | PR-6 | mudcat shall import OpenLineage events as activities and relations. | Spark, Airflow, dbt and Flink emit OpenLineage events. | T |
 | PR-7 | mudcat shall record each compaction or rewrite of data files as an activity that generates a new representation or a redacted successor snapshot. | Files are immutable versions with lineage, so a silent rewrite would break provenance and verification. | T |
+| PR-8 | mudcat shall keep the provenance relations of a version after it purges the bytes of the version. | Intermediate results connect durable data in lineage, and provenance through removed files cannot be computed again; Goods reports this. | T |
+| PR-9 | mudcat shall record each deployment of a model version as an activity. | Without this record, a model in service and a model that nobody used look the same; a study of 3000 pipelines at Google found that about 80% of trained models were not deployed. | T |
+| PR-10 | mudcat shall record the pipeline and the run ID with each activity that a run of a pipeline makes. | A pipeline runs many times, and its provenance must be divisible by run. | T |
+| PR-11 | mudcat shall return the run view of a given model version in one request. | The provenance of a pipeline that runs for months is one connected graph of thousands of nodes; readers need the part for one model. | T |
+| PR-12 | mudcat shall mark each provenance relation that an enricher derived from logs as inferred. | Relations from sampled logs are less certain than relations that mudcat observed or that a client declared. | T |
 
 ## Access control
 
@@ -121,6 +130,8 @@ Identifier prefixes:
 | UP-13 | mudcat shall keep the transaction-time history of refs, identifiers, ACLs, grants, replica states and lifecycle status. | Old scripts and audits must resolve names and decisions as they were. | T |
 | UP-14 | mudcat shall return an error that states the expiry when an as-of resolution needs an expired snapshot. | A silent resolution to another snapshot would break reproducibility. | T |
 | UP-15 | mudcat shall accept a manifest at resolution without a check of each element only if every source that the manifest uses permits the requested action and purpose, and no entry is in the invalidation set. | A check of each element is too slow at 10^11 elements, but a shortcut must not let excluded data through. | T |
+| UP-16 | mudcat shall refuse each action that needs a usage grant on a version whose source is unknown. | Data that nobody declared has no known terms, so no use of it can be shown to be permitted. | T |
+| UP-17 | When mudcat invalidates or purges a version, mudcat shall apply the same operation to each intermediate and each cache that derives from that version. | Copies and derived shards of removed content must not stay in storage; intermediates and caches are the copies that people forget. | T |
 
 ## Data access and resolution
 
@@ -146,6 +157,8 @@ Identifier prefixes:
 | PL-4 | mudcat shall make access decisions only for data on storage resources that its own tenant owns. | Under federation the tenant that owns the data decides. | T |
 | PL-5 | mudcat shall sign each event that it sends on the federation feed. | Receiving tenants must verify where an event came from. | T |
 | PL-6 | mudcat shall report each file on a storage resource that no replica record describes, and each replica record whose file is missing. | Dark data and lost replicas make the catalog wrong; Rucio runs the same consistency checks. | T |
+| PL-7 | mudcat shall purge the bytes of an intermediate artifact when its time to live ends, and keep its catalog record. | Intermediates are most of the churn of a catalog, and their bytes must not stay for ever; their records carry lineage. | T |
+| PL-8 | mudcat shall make a discovered entry for each file on an external storage resource with discovery on that no replica record describes. | Teams keep data on storage that they do not register; a catalog that waits for registration does not see it. | T |
 
 ## Interfaces and standards
 
@@ -158,6 +171,11 @@ Identifier prefixes:
 | IN-5 | mudcat shall serve record datasets through an Iceberg REST catalog interface. | Spark, Trino, DuckDB and PyIceberg read tables through Iceberg REST. | T |
 | IN-6 | mudcat shall provide an MCP server that applies the permissions of the caller. | Agents are now common clients of catalogs. | T |
 | IN-7 | mudcat shall import an existing Datacat database. | Datacat users need a migration path. | D |
+| IN-8 | mudcat shall generate a Schema.org Dataset description in JSON-LD for each published snapshot from the catalog. | Dataset search engines read Schema.org descriptions, and a second, hand-written copy of the metadata goes out of date. | T |
+| IN-9 | mudcat shall refuse to make a snapshot public if its description has no name, or has a description text of fewer than 50 or more than 5000 characters. | Google Dataset Search needs a name and a description of this length. | T |
+| IN-10 | mudcat shall report, for each description, the properties that the description lacks for each conformance level. | Owners must know what to add before they publish. | T |
+| IN-11 | mudcat shall serve a landing page with the JSON-LD description for each public dataset, and a sitemap of these pages. | Search engines find dataset descriptions through landing pages and sitemaps. | D |
+| IN-12 | mudcat shall import a Schema.org, DCAT or Croissant description as a dataset on a reference storage resource. | The public datasets that a team uses must be in the same catalog and the same lineage as its own data. | T |
 
 ## Change stream and search
 
@@ -226,3 +244,5 @@ Each of these queries shall be possible as one request to mudcat. The verificati
 | QY-6 | mudcat shall list the runs, models and caches that use data whose licence expires before a given date. |
 | QY-7 | mudcat shall list the candidates that a given model generated, the experiments that used them, and the models that used the results of those experiments in training. |
 | QY-8 | mudcat shall resolve again the training inputs of a given model and report the elements that usage policy now excludes. |
+| QY-9 | mudcat shall list the data that had no resolution and no onward use in a given period, with its size, its sources and the duties that apply. |
+| QY-10 | mudcat shall report, for a given snapshot, the number of resolutions for each action and the time of the last resolution. |

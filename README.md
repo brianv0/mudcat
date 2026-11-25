@@ -19,7 +19,7 @@ For any piece of data and any model, mudcat answers five questions:
 | Document | Contents |
 |---|---|
 | [docs/use-cases.md](docs/use-cases.md) | The five grounding use cases, with the evidence for each and the parts of the design that each one tests |
-| [evals/](evals/README.md) | 15 task templates that expand into 280 variants, 16 invariants, and 31 reference scenarios, with the results that mudcat must give |
+| [evals/](evals/README.md) | 17 task templates that expand into 300 variants, 17 invariants, and 31 reference scenarios, with the results that mudcat must give |
 | [docs/model.md](docs/model.md) | The conceptual data model: RDF vocabularies (PROV-O, DCAT, CSVW, and ODRL for terms of use), Zanzibar-style access control, and how it maps to Datacat, iRODS, Rucio and the Butler |
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
@@ -31,9 +31,10 @@ The research behind the design is in the Datacat fork, at [brianv0/datacat, bran
 ## Design principles
 
 - **Register, don't replace.** Lance, Parquet, Iceberg, Zarr, HDF5, MCAP and the formats of each field stay as they are. mudcat describes them, tracks their copies and records their use.
-- **Standard vocabularies first.** The model uses PROV-O, DCAT 3, CSVW and ODRL. mudcat defines its own terms only where no standard term exists. JSON-LD is the exchange format. RDF describes the model, but it is not the storage engine.
+- **Standard vocabularies first.** The model uses PROV-O, DCAT 3, CSVW and ODRL, and it describes datasets for the public with Schema.org and Croissant. mudcat defines its own terms only where no standard term exists. JSON-LD is the exchange format. RDF describes the model, but it is not the storage engine.
 - **Not everything is a table.** Every version carries a structure descriptor. mudcat lists elements only when the data itself lists them. It addresses arrays and streams by coordinates and time spans instead.
 - **Immutable things, mutable pointers.** Versions, snapshots and provenance records never change. Names, refs and lifecycle states can change.
+- **The record outlives the bytes.** When data reaches the end of its lifetime, mudcat removes the bytes and keeps the record: the ID, the checksum, the statistics and the provenance. Lineage through removed data stays complete.
 - **Immutable data, cheap copies.** A clone, a branch ref, a sandbox or a selection shares immutable data by reference. It does not copy the data. References between tenants have no foreign key in the database, and mudcat checks them in other ways.
 - **Optional structure has explicit defaults.** Versions, refs, partitions, representations, replicas, tenants and schemas each have a real default value. Data with no such structure needs no extra work, and the structure can be added later without migration. Requests can omit these dimensions. Records that must be reproducible state them explicitly. Physical dimensions never affect identity or content hashes.
 - **Outside the read path.** mudcat resolves names to replicas and issues credentials. It never proxies data reads.

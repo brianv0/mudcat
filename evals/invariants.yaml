@@ -81,3 +81,8 @@
   statement: A derived index that is dropped and built again has the same content as before.
   observe: Compare the documents of the index before the drop and after the rebuild.
   verifies: [OP-2]
+
+- id: INV-17
+  statement: The provenance relations of a version exist after mudcat purges the bytes of the version.
+  observe: After each purge, run a lineage query from an output that derives from the purged version, and compare the result with the result before the purge.
+  verifies: [PR-8]

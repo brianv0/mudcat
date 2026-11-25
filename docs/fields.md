@@ -21,6 +21,18 @@ A **field profile** adapts mudcat to one scientific or technical field. It adds 
 
 A profile is a plugin with a version. mudcat records the version of the profile with each structure descriptor and each piece of metadata that the profile produced.
 
+## Field profiles of the public description
+
+The public description of a dataset (model, section 4) uses Schema.org `Dataset`. Some fields publish their own guidelines for this type. A field profile can adopt such guidelines: it adds necessary properties to the `describe` namespace and to the conformance levels.
+
+| Guidelines | Field | Adds |
+|---|---|---|
+| science-on-schema.org, from the ESIP federation | Earth and environmental science | Conventions for `spatialCoverage`, `temporalCoverage`, `variableMeasured` and funding |
+| Bioschemas `Dataset` profile | Life sciences | Minimum, recommended and optional properties, and links to samples and taxa |
+| DUO terms in Croissant `usageInfo` | Health data | Machine-readable conditions for the use of data, for example general research use |
+
+These entries are a start point. The project did not examine the guidelines in detail.
+
 ## A schema profile, worked example: Felis
 
 Rubin's Felis describes catalog schemas in YAML. It uses JSON-LD-style `@id` keys and maps closely onto CSVW. It is the worked example of a schema profile:
