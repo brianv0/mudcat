@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      MUDCAT_DB: postgres://mudcat:mudcat@localhost:5432/mudcat_evals
+      MUDCAT_TEST_DB: postgres://mudcat:mudcat@localhost:5432/mudcat_tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure PostgreSQL
+        # The relay of the change stream is tested against a server with commit timestamps
+        # (scripts/dev-db.sh sets the same). A service container takes no server arguments, so
+        # the settings are made with ALTER SYSTEM and the container restarts.
+        run: |
+          psql -h localhost -U postgres -c "alter system set track_commit_timestamp = on"
+          psql -h localhost -U postgres -c "alter system set max_connections = 300"
+          docker restart "${{ job.services.postgres.id }}"
+          for i in $(seq 1 30); do pg_isready -h localhost -U postgres && break; sleep 2; done
+          psql -h localhost -U postgres -c "show track_commit_timestamp"
+          # the application role is not a superuser, so row-level security applies to it
+          psql -h localhost -U postgres -c "create role mudcat login createdb password 'mudcat'"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the definitions of the evals
+        run: |
+          pip install pyyaml
+          python3 evals/check.py
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build
+      - name: Tests
+        run: cargo test
+      - name: Evals, smoke scale
+        run: target/debug/mudcat-evals --scale smoke --jobs 4

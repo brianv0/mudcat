@@ -1,0 +1,58 @@
+name: mutation-gate
+
+# Started by hand. Seeds each known defect, one at a time, and requires that the smoke evals or
+# the tests detect it (scripts/mutation-gate.sh). It takes about 40 minutes or more.
+on:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      MUDCAT_SERVER: postgres://mudcat:mudcat@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure PostgreSQL
+        run: |
+          psql -h localhost -U postgres -c "alter system set track_commit_timestamp = on"
+          psql -h localhost -U postgres -c "alter system set max_connections = 300"
+          docker restart "${{ job.services.postgres.id }}"
+          for i in $(seq 1 30); do pg_isready -h localhost -U postgres && break; sleep 2; done
+          psql -h localhost -U postgres -c "create role mudcat login createdb password 'mudcat'"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/mutants"
+
+      - name: Mutation gate
+        run: scripts/mutation-gate.sh
+
+      - name: Save the table and the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-gate
+          path: |
+            evals/results/mutation-gate.txt
+            target/mutation-gate/*.log
