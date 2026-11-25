@@ -34,6 +34,7 @@ Identifier prefixes:
 | IN | Interfaces and standards |
 | OP | Operation and deployment |
 | PF | Performance and scale |
+| EV | Change stream and search |
 | QY | Queries the system must answer |
 
 ## Identity and immutability
@@ -153,6 +154,22 @@ Identifier prefixes:
 | IN-5 | mudcat shall serve record datasets through an Iceberg REST catalog interface. | Spark, Trino, DuckDB and PyIceberg read tables through Iceberg REST. | T |
 | IN-6 | mudcat shall provide an MCP server that applies the permissions of the caller. | Agents are now common clients of catalogs. | T |
 | IN-7 | mudcat shall import an existing Datacat database. | Datacat users need a migration path. | D |
+
+## Change stream and search
+
+| ID | Requirement | Rationale | Ver. |
+|---|---|---|---|
+| EV-1 | mudcat shall publish an event for each committed change to an entity, and no event for a change that did not commit. | Consumers must be able to trust the stream as a complete record. | T |
+| EV-2 | mudcat shall give each event a type with a version and a JSON Schema. | Consumers must be able to validate events, and event types must be able to change. | I |
+| EV-3 | mudcat shall deliver the events for one entity in the order of their commits. | A consumer that applies events out of order gets a wrong state. | T |
+| EV-4 | mudcat shall publish the complete current state document of an entity after each change to that entity. | An index builder must not need a second request for each event. | T |
+| EV-5 | mudcat shall send, on request, the state document of each entity that a consumer can read, and then continue with the live stream without a gap. | A new or recovered consumer must be able to build a complete index. | T |
+| EV-6 | mudcat shall send to a subscription only the events for entities that the identity of the subscription can read. | The stream must not give more access than the catalog gives. | T |
+| EV-7 | mudcat shall publish a removal event for each entity that it invalidates or erases. | Indexes, knowledge graphs and retrieval stores outside mudcat must be able to delete their copies. | T |
+| EV-8 | mudcat shall operate the change stream without a message broker. | Small teams must be able to operate mudcat. | D |
+| EV-9 | mudcat shall return search results for a query that differs from a stored name by one spelling error. | Users do not always know exact names. | T |
+| EV-10 | mudcat shall rank search results with lexical match and vector similarity combined. | Each kind of match finds results that the other does not. | T |
+| EV-11 | mudcat shall check current access control and the invalidation set for each search result before it returns the result. | The search index can be behind the catalog. | T |
 
 ## Operation and deployment
 

@@ -89,7 +89,7 @@ The catalog API is a stateless service with these interfaces:
 
 - **REST interface:** it has an OpenAPI description and uses JSON by default. Content negotiation gives JSON-LD with the published context. Paging uses cursors with a stable default order, and counts are estimates. To count results, Datacat's REST layer iterated over the full result set. pgstac documents the same failure mode.
 - **Bulk interface** for registration, manifest submission and resolution: Apache Arrow over HTTP or Arrow Flight. It handles millions of rows per call.
-- **Event stream** of catalog changes, for consumers that need it.
+- **Change stream** of catalog changes (see Change stream, below).
 - **Commits with requirements.** A request that changes a dataset has the shape of an Iceberg REST commit. It has a list of **requirements** and a list of **updates**. Iceberg calls a requirement such as `assert-ref-snapshot-id` an assertion about the current table state. In mudcat, a requirement such as "branch `main` points to snapshot S" goes with an update such as "add these members". mudcat applies all the updates in one transaction, but only if all the requirements are true. If not, it returns a conflict, and the client tries again. One request can change several datasets, in one transaction. This is optimistic concurrency.
 
 ### Commit cost
@@ -133,7 +133,7 @@ The catalog database is PostgreSQL with one schema per model area: namespace and
 - **Paths:** the catalog stores paths as materialised paths in `ltree`, so it evaluates path globs and ACL inheritance in SQL. This removes Datacat's Java tree walk and its temporary tables.
 - **Metadata:** the catalog stores each metadata payload as one JSONB document, with a key of (entity, namespace). It promotes declared attributes to typed, indexed columns. GIN indexes serve equality and containment queries. Range queries and sorts need the promoted columns.
 - **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by instance and namespace.
-- **Outbox:** every transaction appends its changes to an outbox table. A relay publishes these changes as CloudEvents.
+- **Outbox:** every transaction appends its events to an outbox table. A relay publishes them on the change stream.
 
 mudcat produces RDF from this schema through a declared mapping and the JSON-LD context. A triple store is optional, and mudcat uses it only for export.
 
@@ -299,12 +299,98 @@ Provider list operations have result limits, especially in OpenFGA. For this rea
 
 **Conformance tests.** One suite of authorization scenarios runs against every adapter: inheritance through ACL roots, compartments, tickets, revocation ordering and lookups. mudcat supports an adapter only if it passes.
 
+### Change stream
+
+mudcat publishes each change to the catalog as an event. This is change data capture, but at the level of the model. An event describes a change to an entity, not a change to a database row. Thus the stream stays stable when the database schema changes.
+
+**Source.** A commit writes its events to the outbox in the same transaction as the change. A relay then publishes them. Thus an event exists for a change if, and only if, the change committed.
+
+**Envelope.** Each event is a CloudEvents 1.0 event with these attributes:
+
+| Attribute | Content |
+|---|---|
+| `id` | The ID of the event |
+| `source` | The IRI of the instance |
+| `type` | The event type, with a version, for example `mudcat.snapshot.committed.v1` |
+| `subject` | The ID of the entity that changed |
+| `time` | The commit time |
+| `dataschema` | The JSON Schema of the event data |
+| `sequence` | The position of the event in the stream of the instance. Positions only increase |
+| `commit` | The ID of the commit. All the events of one commit share it |
+| `revision` | The number of changes to this entity so far. A consumer uses it to ignore an event that it applied before |
+| `actor` | The principal that made the change |
+
+**Event types.** Each family covers one part of the model:
+
+| Family | Events |
+|---|---|
+| Collections and artifacts | Collection created, moved, removed. Artifact registered. Version registered. Delete marker written. Identifier added, changed, removed |
+| Replicas and storage | Replica registered, verified, suspect, lost, retired. Storage resource changed |
+| Metadata | Metadata payload written, removed. Tag assigned, removed. Field declared. Schema changed. Enricher output proposed, accepted, rejected |
+| Datasets | Snapshot committed (with its change summary). Ref moved. Snapshot published, deprecated, withdrawn, expired. Manifest sealed |
+| Access and policy | Relationship written, removed. Source and terms changed. Usage grant, constraint or duty changed. Legal hold placed, released |
+| Removal | Invalidation added. Replica purged (with its deletion receipt). Entity erased |
+| Provenance | Activity started, ended. Resolution created. Usage and generation recorded |
+| Placement | Replication rule created, removed. Completeness changed. Transfer requested, finished, failed |
+
+**Two streams.** Consumers need two different things, so mudcat publishes two streams from the same outbox:
+
+- **Change events** tell what happened, in order. Each event carries the changed values, before and after. mudcat keeps change events for a retention period.
+- **State documents** give the complete current description of an entity after each change (see Search, below). The key of a state document is the entity ID, so a message broker can keep only the newest document for each entity. A consumer that builds an index needs only this stream.
+
+**Start and recovery of a consumer.** A new consumer, or one that lost its position, asks for a **backfill**. mudcat then sends the state document of each entity that the consumer can read. It marks the position where the backfill started, and continues with the live stream from that position. This is how mudcat rebuilds a derived index (OP-2, OP-3).
+
+**Delivery.**
+
+- Delivery is at least once. A consumer uses `revision` to make its writes idempotent.
+- Events for one entity arrive in order. The partition key is the entity ID.
+- A consumer keeps its position (`sequence`), and can find a gap.
+
+**Removal.** When mudcat invalidates or erases an entity, the state stream carries a removal event for it. A consumer must then delete its copy. The terms of a subscription make this an obligation.
+
+**Permissions.** A subscription has an identity. mudcat sends it only the events for entities that this identity can read. Customer-held metadata values are never in an event. The federation feed is a subscription with a signature on each event.
+
+**Transport.** The built-in transport is an HTTP feed with a position, so mudcat needs no message broker. Connectors publish the same events to Kafka, NATS and the event services of cloud providers. mudcat can also publish lineage as OpenLineage events, for tools that read that format.
+
+### Search
+
+Exact queries go to the catalog database, and their results are authoritative. Search is for the other case: a user does not know the exact name or value. Search results come from a derived index, so they can be a short time behind the catalog.
+
+**Search document.** The state document of an entity is also its search document. It has these parts:
+
+| Part | Content |
+|---|---|
+| Identity | ID, kind, name, path and other identifiers |
+| Description | Description text and documentation |
+| Metadata | Each metadata payload, with its namespace and its assertion origin. The field definitions give the type of each attribute: keyword, number, date, text or location |
+| Tags | The tags of the entity, with the tags that it inherits |
+| Structure | Structure kind, and the names and descriptions of fields. Thus a user can find a table by one of its columns |
+| Statistics | Size, counts, time span and spatial extent |
+| Lineage | Root sources, the activity that produced the entity, and the number of entities upstream and downstream |
+| Policy | Licences and the permitted actions and purposes |
+| Use | How often and how recently jobs resolved the entity |
+| Access | ACL root and compartments, for the filter on permissions |
+
+**Scope.** Collections, artifacts, datasets, snapshots, sources, models and activities each have a search document. A version has no search document of its own by default: its artifact carries a summary of its versions. Elements are not in this index. Their embeddings are annotation sets, and vector engines index them.
+
+**Kinds of match.** A search combines four kinds:
+
+- **Lexical.** Full-text match with ranking. Names and paths are split at separators and at changes of letter case, so `rawFrames_2026` matches "raw frames".
+- **Tolerant.** Match with spelling errors (edit distance or trigrams), and match on the first letters of a word for completion while the user types.
+- **Semantic.** Match on meaning, with a vector embedding of a text form of the search document. Each embedding records the version of the model that made it. Synonyms come from the semantic annotations of fields and from the vocabularies of field profiles.
+- **Similar entity.** "More like this one", from shared fields, tags, lineage neighbours and embeddings.
+
+**Ranking.** The rank combines the lexical score and the vector score, with reciprocal rank fusion. It then adds signals from the catalog: use, published status, review status, and how recent the entity is. Deprecated entities rank lower. A user can exclude metadata that a model inferred.
+
+**Filters and permissions.** A search can include exact conditions on any indexed attribute, on tags and on lineage. The index applies the filter on permissions. Then, before mudcat returns results, the catalog checks access control and the invalidation set again for each result, because the index can be behind.
+
+**Engines.** In the development and lab profiles, PostgreSQL does all of this: full-text search, trigram match and `pgvector`. In larger deployments, the state stream feeds an external search engine, for example OpenSearch. The same stream feeds knowledge graphs and retrieval indexes for AI agents.
+
 ### Index builders
 
 Consumers of the change log keep derived indexes current:
 
-- **Search documents:** the metadata of each entity, plus a denormalised summary of its lineage and policy, for facets. The lineage summary gives the root sources, the pipeline and code version that produced the entity, and upstream licences.
-- **Vector embeddings,** of descriptions and of dataset-level content summaries. Element-level embeddings are annotation sets, and external engines index them.
+- **Search index:** built from the state stream (see Search, above), with lexical, tolerant and vector match.
 - **Content-identity index:** a map from fingerprint or domain key to (snapshot, element). Batch jobs build it as partitioned columnar files. It starts with exact checksums and domain keys. Near-duplicate fingerprints come later.
 - **Similarity tables** for registered similarity criteria, versioned with the criterion.
 
