@@ -141,15 +141,23 @@ async fn copy_tenant(inst: &Arc<Instance>, tenant: Uuid, source: &deadpool_postg
         // COPY FROM does not run on a table with row-level security, so the rows go through a
         // staging table; the insert from it passes the policy of the tenant
         ttx.batch_execute(&format!("create temporary table stage_{table} (like {table} including defaults) on commit drop")).await?;
-        let out = stx.copy_out(&format!("copy (select * from {table}) to stdout (format binary)")).await?;
-        let sink = ttx.copy_in(&format!("copy stage_{table} from stdin (format binary)")).await?;
+        // by column names: the same columns can have another order in another database
+        let cols: Vec<String> = stx
+            .query("select column_name::text from information_schema.columns where table_schema = current_schema() and table_name = $1 order by ordinal_position", &[table])
+            .await?
+            .iter()
+            .map(|r| format!("\"{}\"", r.get::<_, String>(0)))
+            .collect();
+        let cols = cols.join(", ");
+        let out = stx.copy_out(&format!("copy (select {cols} from {table}) to stdout (format binary)")).await?;
+        let sink = ttx.copy_in(&format!("copy stage_{table} ({cols}) from stdin (format binary)")).await?;
         futures::pin_mut!(out);
         futures::pin_mut!(sink);
         while let Some(chunk) = out.next().await {
             sink.send(chunk?).await?;
         }
         sink.finish().await?;
-        ttx.batch_execute(&format!("insert into {table} select * from stage_{table}")).await?;
+        ttx.batch_execute(&format!("insert into {table} ({cols}) select {cols} from stage_{table}")).await?;
     }
     // sequences of the target stay ahead of the copied values
     ttx.batch_execute(
