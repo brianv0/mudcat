@@ -94,8 +94,21 @@ async fn upsert(tx: &Tx<'_>, version: i32, d: &Doc) -> Result<()> {
         &[&version, &d.id, &d.kind, &d.parent, &d.doc, &d.body, &d.embedding, &d.acl_root, &d.revision],
     )
     .await?;
-    let words: Vec<String> = tokens(&d.body).into_iter().filter(|w| w.len() > 3 && w.chars().all(|c| c.is_alphabetic())).collect();
-    tx.exec("insert into search_word (word) select distinct unnest($1::text[]) on conflict do nothing", &[&words]).await?;
+    Ok(())
+}
+
+fn words_of(body: &str) -> BTreeSet<String> {
+    tokens(body).into_iter().filter(|w| w.len() > 3 && w.chars().all(|c| c.is_alphabetic())).collect()
+}
+
+/// Add words to the vocabulary, in sorted order, so that concurrent builders lock them in the
+/// same order.
+async fn add_words(tx: &Tx<'_>, words: &BTreeSet<String>) -> Result<()> {
+    let w: Vec<String> = words.iter().cloned().collect();
+    for chunk in w.chunks(5000) {
+        let c: Vec<String> = chunk.to_vec();
+        tx.exec("insert into search_word (word) select unnest($1::text[]) order by 1 on conflict do nothing", &[&c]).await?;
+    }
     Ok(())
 }
 
@@ -177,9 +190,12 @@ async fn annotation_docs(tx: &Tx<'_>, dataset: Uuid) -> Result<Vec<Doc>> {
     Ok(out)
 }
 
-async fn refresh_entity(tx: &Tx<'_>, version: i32, id: Uuid) -> Result<()> {
+async fn refresh_entity(tx: &Tx<'_>, version: i32, id: Uuid, words: &mut BTreeSet<String>) -> Result<()> {
     match entity_doc(tx, id).await? {
-        Some(d) => upsert(tx, version, &d).await,
+        Some(d) => {
+            words.extend(words_of(&d.body));
+            upsert(tx, version, &d).await
+        }
         None => {
             tx.exec("delete from search_doc where index_version = $1 and entity_id = $2", &[&version, &id]).await?;
             Ok(())
@@ -189,10 +205,12 @@ async fn refresh_entity(tx: &Tx<'_>, version: i32, id: Uuid) -> Result<()> {
 
 async fn refresh_dataset_annotations(tx: &Tx<'_>, version: i32, dataset: Uuid) -> Result<()> {
     tx.exec("delete from search_doc where index_version = $1 and kind = 'annotation' and doc->>'dataset' = $2", &[&version, &dataset.to_string()]).await?;
+    let mut words = BTreeSet::new();
     for d in annotation_docs(tx, dataset).await? {
+        words.extend(words_of(&d.body));
         upsert(tx, version, &d).await?;
     }
-    Ok(())
+    add_words(tx, &words).await
 }
 
 /// Bring the active index up to date with the change stream. Returns the number of events applied.
@@ -253,9 +271,11 @@ pub async fn build(sess: &Session) -> Result<usize> {
         handles.push(tokio::spawn(async move {
             let mut c = s.client().await?;
             let tx = s.begin(&mut c).await?;
+            let mut words = BTreeSet::new();
             for e in part {
-                refresh_entity(&tx, version, e).await?;
+                refresh_entity(&tx, version, e, &mut words).await?;
             }
+            add_words(&tx, &words).await?;
             tx.commit().await
         }));
     }
@@ -283,16 +303,20 @@ pub async fn rebuild(sess: &Session) -> Result<i32> {
     let new = old + 1;
     let pos: i64 = tx.qopt("select last_position from stream_state", &[]).await?.map(|r| r.get(0)).unwrap_or(0);
     tx.exec("delete from search_doc where index_version = $1", &[&new]).await?;
+    let mut words = BTreeSet::new();
     for r in tx.q("select id from artifact union all select id from dataset union all select id from collection", &[]).await? {
         if let Some(d) = entity_doc(&tx, r.get(0)).await? {
+            words.extend(words_of(&d.body));
             upsert(&tx, new, &d).await?;
         }
     }
     for r in tx.q("select id from dataset", &[]).await? {
         for d in annotation_docs(&tx, r.get(0)).await? {
+            words.extend(words_of(&d.body));
             upsert(&tx, new, &d).await?;
         }
     }
+    add_words(&tx, &words).await?;
     tx.exec("update index_state set active_version = $1, position = $2 where name = 'search'", &[&new, &pos]).await?;
     tx.exec("delete from search_doc where index_version = $1", &[&old]).await?;
     tx.commit().await?;
