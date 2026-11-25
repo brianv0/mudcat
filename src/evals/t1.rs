@@ -24,6 +24,10 @@ pub async fn resolve_and_read(ctx: &mut Ctx) -> Result<()> {
     acl_root(&admin, "/data", Some(("store", "data/"))).await?;
     source(&admin, "src", "instrument", json!({}), &[("train", "research")]).await?;
     grant_collection(&admin, "/data", "reader", "user:trainer").await?;
+    // a distractor: a second ACL root on another prefix of the same bucket, with two registered and
+    // verified files that the trainer cannot read. A prefix credential for more than /data covers them (INV-15).
+    acl_root(&admin, "/secret", Some(("store", "secret/"))).await?;
+    let secret_files: Vec<(String, Vec<u8>)> = (0..2).map(|i| (format!("hidden-{i}.bin"), file_bytes("opaque", i, "secret"))).collect();
     let files: Vec<(String, Vec<u8>)> = (0..n).map(|i| (format!("item-{i:06}.{}", ext(&structure)), file_bytes(&structure, i, "a"))).collect();
     let copied_before = ctx.inst.metrics.bytes_copied_for_catalog.load(Ordering::SeqCst);
     let puts_before = ctx.inst.store.accesses().iter().filter(|a| a.op == "put" && a.client != "lab").count();
@@ -36,10 +40,20 @@ pub async fn resolve_and_read(ctx: &mut Ctx) -> Result<()> {
             let c = tx.commit_id().await?;
             tx.exec("insert into metadata_payload (entity_id, namespace, payload, origin, asserted_by, commit_id) select id, 'defaults', '{\"source\":\"src\"}', 'person', 'user:admin', $1 from collection where path = '/data'", &[&c]).await?;
         });
+        for (name, data) in &secret_files {
+            ctx.inst.store.put("lab", &res.bucket, &format!("secret/{name}"), data)?;
+        }
         placement::report_inventory(&admin, "store", "agent-store").await?;
-        let ids: Vec<Uuid> = in_tx!(admin, |tx| tx.q("select id from version", &[]).await?.iter().map(|r| r.get(0)).collect());
+        // only the versions under /data; the distractor has two more
+        let ids: Vec<Uuid> = in_tx!(admin, |tx| tx
+            .q("select v.id from version v join artifact a on a.id = v.artifact_id join collection c on c.id = a.collection_id where c.path = '/data'", &[])
+            .await?
+            .iter()
+            .map(|r| r.get(0))
+            .collect());
         ids
     } else {
+        register_files(&admin, &res, "/secret", "secret/", &secret_files, None, None).await?;
         register_files(&admin, &res, "/data", "data/", &files, Some("src"), None).await?.iter().map(|r| r.version_id).collect()
     };
     let copied = ctx.inst.metrics.bytes_copied_for_catalog.load(Ordering::SeqCst) - copied_before;
