@@ -72,7 +72,7 @@ A round trip is a wait for the database. Its cost is the network between mudcat 
 | Commit: add one member to a dataset | 70 | 35 | 38 |
 | Resolve a published dataset with 10 members | 105 | 54 | 57 |
 
-The counts before are from the statement log of the server, and the counts now are from the counter in mudcat. Two changes made the difference:
+The counts before are from the statement log of the server, and the counts now are from the counter in mudcat. Both were checked on the connection itself, with a proxy between mudcat and PostgreSQL that counts each time mudcat sends and the server then answers: it gives the same seven counts now. For the code before, it gives the same count for four operations and one more for three (6, 71 and 106): the close of a statement, which mudcat does not wait for. All exchanges of an operation are on one or two open connections; no operation opens a connection. Two changes made the difference:
 
 - **Statements are prepared one time for each connection.** A statement that is sent as text costs two round trips each time: one to prepare it and one to run it. That was 45% of all round trips. The plan of a prepared statement is still made for the values of each execution (`plan_cache_mode = force_custom_plan`), as before, because a plan for unknown values cannot use the range of a path prefix. A connection keeps at most 2,000 prepared statements.
 - **Statements that do not need the answer of the one before go to the database together.** The fence of a tenant move, the home marker and the commit record of a write are one round trip (six before). The commit lock and the order number are one (four before). The setting for a page query, the query and the setting back are one.
