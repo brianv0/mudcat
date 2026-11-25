@@ -16,7 +16,7 @@ pub const TENANT_TABLES: &[&str] = &[
     "review_item", "invalidation", "legal_hold", "hold_scope", "model_flag", "relation", "relation_history", "membership_source",
     "linked_identity", "trust_rule", "audit", "activity", "usage", "generation", "derivation", "resolution", "credential_log",
     "similarity_criterion", "leakage_assertion", "identity_index", "replication_rule", "transfer", "completeness", "agent_task", "outbox",
-    "event", "stream_state", "subscription", "search_doc", "index_state",
+    "event", "stream_state", "subscription", "search_doc", "search_word", "index_state",
 ];
 
 /// Create a tenant. Its ID comes from a cryptographic random generator: a UUIDv4 has 122 random

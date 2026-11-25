@@ -898,6 +898,14 @@ create table if not exists search_doc (
 create index if not exists search_doc_tsv on search_doc using gin (tsv);
 create index if not exists search_doc_trgm on search_doc using gin (body gin_trgm_ops);
 
+-- the vocabulary of the search index (derived): close words for a word with a spelling error
+create table if not exists search_word (
+  tenant_id  uuid not null default mc_tenant(),
+  word       text not null,
+  primary key (tenant_id, word)
+);
+create index if not exists search_word_trgm on search_word using gin (word gin_trgm_ops);
+
 create table if not exists index_state (
   tenant_id       uuid not null default mc_tenant(),
   name            text not null,
@@ -921,7 +929,7 @@ begin
     'relation','relation_history','membership_source','linked_identity','trust_rule','audit',
     'activity','usage','generation','derivation','resolution','credential_log',
     'similarity_criterion','leakage_assertion','identity_index','replication_rule','transfer',
-    'completeness','agent_task','outbox','event','stream_state','subscription','search_doc',
+    'completeness','agent_task','outbox','event','stream_state','subscription','search_doc','search_word',
     'index_state']
   loop
     execute format('alter table %I enable row level security', t);
@@ -933,6 +941,9 @@ begin
     -- whole tenant look as cheap as a lookup by key
     execute format('alter table %I alter column tenant_id set statistics 0', t);
   end loop;
+  -- the derived search tables are read by scans, where the size of the tenant matters
+  alter table search_doc alter column tenant_id set statistics -1;
+  alter table search_word alter column tenant_id set statistics -1;
 end $$;
 
 insert into schema_version values (1) on conflict do nothing;

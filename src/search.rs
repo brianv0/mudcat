@@ -94,6 +94,8 @@ async fn upsert(tx: &Tx<'_>, version: i32, d: &Doc) -> Result<()> {
         &[&version, &d.id, &d.kind, &d.parent, &d.doc, &d.body, &d.embedding, &d.acl_root, &d.revision],
     )
     .await?;
+    let words: Vec<String> = tokens(&d.body).into_iter().filter(|w| w.len() > 3 && w.chars().all(|c| c.is_alphabetic())).collect();
+    tx.exec("insert into search_word (word) select distinct unnest($1::text[]) on conflict do nothing", &[&words]).await?;
     Ok(())
 }
 
@@ -389,15 +391,28 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
             docs.insert(id, (r.get(1), r.get(2), r.get(3), r.get::<_, Option<Vec<f32>>>(4).unwrap_or_default()));
         }
         rank_lists.push(list);
-        // tolerant: trigram word similarity, for spelling errors
-        tx.exec("set local pg_trgm.word_similarity_threshold = 0.4", &[]).await?;
-        let terms: Vec<String> = tokens(text).into_iter().filter(|t| t.len() > 3).collect();
-        if !terms.is_empty() {
+        // tolerant: words of the vocabulary that are close to a word of the query (trigram
+        // similarity), for spelling errors; the expanded query then runs as a lexical query
+        tx.exec("select set_limit(0.4)", &[]).await?;
+        let mut alternatives = Vec::new();
+        for t in tokens(text).into_iter().filter(|t| t.len() > 3) {
+            let close: Vec<String> = tx
+                .q("select word from search_word where word % $1 order by similarity(word, $1) desc limit 3", &[&t])
+                .await?
+                .iter()
+                .map(|r| r.get(0))
+                .collect();
+            let mut alts = vec![t.clone()];
+            alts.extend(close.into_iter().filter(|w| *w != t));
+            alternatives.push(format!("({})", alts.join(" | ")));
+        }
+        if !alternatives.is_empty() {
+            let tq = alternatives.join(" | ");
             let tol = tx
                 .q(
-                    &format!("select entity_id, kind, parent_id, doc, embedding, (select sum(word_similarity(t, body)) from unnest($5::text[]) t) as s
-                              from search_doc where {base_filter} and body %> any($5) order by s desc limit 300"),
-                    &[&version, &roots, &tag_filter, &kind_filter, &terms],
+                    &format!("select entity_id, kind, parent_id, doc, embedding from search_doc where {base_filter} and tsv @@ to_tsquery('english', $5)
+                              order by ts_rank(tsv, to_tsquery('english', $5)) desc limit 300"),
+                    &[&version, &roots, &tag_filter, &kind_filter, &tq],
                 )
                 .await?;
             let mut list = Vec::new();

@@ -487,7 +487,10 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
     // a page in key order: the scan of the key index gives the order, so a plan that sorts the
     // whole tenant is never better; the planner cannot know this, because it has no statistics
     // of the tenant column (see schema.sql)
-    tx.exec("set local enable_sort = off", &[]).await?;
+    let drives_from_index = comp.selective.values().any(|v| *v) || q.contains("permitted(");
+    if !drives_from_index {
+        tx.exec("set local enable_sort = off", &[]).await?;
+    }
     let rows = tx.t.query(sql.as_str(), &params).await;
     tx.exec("set local enable_sort = on", &[]).await?;
     let rows = rows?;
