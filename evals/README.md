@@ -184,6 +184,23 @@ For each variant the runner makes a fresh tenant, builds the fixture from the pa
 | `no-move-fence` | instance.rs, `Tx::commit_id` | a writer does not take the fence of a tenant move |
 | `cleanup-no-drain` | tenants.rs, `remove_from_source` | a move removes the rows in the old database at once, with open transactions that read them |
 
+### The second sample
+
+The first thirteen defects were chosen by the author of the implementation. This sample of ten was chosen by a different session, for the measurement of the detection rate on defects that the author did not choose. The list was committed before any switch was written and before any run, so the order of the commits is the evidence that it was fixed first; no row has been replaced since. Rules for the choice: a change of one line or a few in `src/` (not `src/evals/`, not `src/bin/`); it breaks a mechanism that a requirement or a rule of `docs/model.md` calls for; none is in the tenant move, `src/tenants.rs` or the fence and home marker of `src/instance.rs`; at most two in a file (here one in each of ten files); ten different requirement families. The defects are the kind that a tired engineer writes: a condition dropped, an order the wrong way, a limit off by one, a check on the first item only.
+
+| Defect | File and function | Effect | Requirement |
+|---|---|---|---|
+| `expire-ignores-resolution` | datasets.rs, `expire` | the expiry of unpublished snapshots does not look at resolutions, so a snapshot that a resolution names expires | ID-9 |
+| `tag-inherit-top-wins` | metadata.rs, `effective_tags_many` | of the tags that an entity inherits from its collections, the highest collection wins over the lowest (the order of the rows is the wrong way) | ST-17 |
+| `purge-hold-first-only` | policy.rs, `purge` | the check for a legal hold looks at the first version of the request only; the others are purged or erased | UP-8 |
+| `jurisdiction-first-only` | resolver.rs, `resolve_inner` | the jurisdiction rules of the caller location are checked for the first collection of the inputs only | RD-9 |
+| `completeness-any-verified` | placement.rs, `refresh_completeness` | a subject is complete on a storage resource when one version is verified there, not each | PL-1 |
+| `sync-keeps-leavers` | authz.rs, `sync_membership` | a member who left the outside team keeps the membership until it is too old | AC-7 |
+| `lineage-depth-off-by-one` | provenance.rs, `lineage` | a traversal may go one level beyond its depth limit before it fails | PF-7 |
+| `poll-floor-off-by-one` | stream.rs, `poll` | a consumer that is one position before the retention floor gets no error, and misses the event at the floor | EV-5 |
+| `overlap-strict` | leakage.rs, `overlap` | two time ranges that only touch at one end are not related | QY-3 |
+| `register-latest-only` | namespace.rs, `register_in` | a repeated registration is idempotent only if the checksum is that of the latest version; one of an older version makes a new version | OP-5 |
+
 For the baseline and for each defect, the script runs the smoke evals and `cargo test`, and writes `evals/results/mutation-gate.txt`: the templates that failed, the tests that failed, and "detected" or "NOT DETECTED". `relay-xid-rule` depends on timing and runs three times; it counts as detected only if every run detects it. The script exits with an error if a defect is not detected or if the baseline is not green. It takes about 40 minutes in a debug build (its own target directory, `target/mutants`). In CI it is a workflow that is started by hand.
 
 ## What the evals do not detect
