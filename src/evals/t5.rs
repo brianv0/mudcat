@@ -406,35 +406,60 @@ pub async fn tenant_move(ctx: &mut Ctx) -> Result<()> {
     let accepted = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
     let retry_errors = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let writer = if writes {
-        let s = ctx.session("user:admin");
-        let (acc, errs, stop) = (accepted.clone(), retry_errors.clone(), stop.clone());
-        Some(tokio::spawn(async move {
-            let mut i = 0;
-            while !stop.load(std::sync::atomic::Ordering::SeqCst) || i < 3 {
-                let path = format!("/big/w/doc-{i}");
-                let r: Result<()> = async {
-                    let mut c = s.client().await?;
-                    let mut tx = s.begin(&mut c).await?;
-                    namespace::register(&mut tx, &Register { path: path.clone(), content_hash: Some(format!("w{i}")), size: 1, ..Default::default() }).await?;
-                    tx.commit().await
-                }
-                .await;
-                match r {
-                    Ok(()) => acc.lock().push(path),
-                    Err(e) => errs.lock().push(format!("{}:{e}", e.code())),
-                }
-                i += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        }))
+    // Two clients write: one through the process that moves the tenant, and one through a second
+    // server process. The second process started before the move, and its registry of tenants is
+    // its own (a fork), so nothing tells it of the move but the database. Each client writes
+    // during the move, and three more times after it; a client that gets an error tries the
+    // same write again a few times.
+    let second_process = inst.fork(inst.data_dir.join("second-process"));
+    let writers: Vec<tokio::task::JoinHandle<()>> = if writes {
+        [("a", ctx.session("user:admin")), ("b", second_process.session(tid, Principal::user("admin")))]
+            .into_iter()
+            .map(|(who, s)| {
+                let (acc, errs, stop) = (accepted.clone(), retry_errors.clone(), stop.clone());
+                tokio::spawn(async move {
+                    let mut i = 0;
+                    let mut after = 0;
+                    while after < 3 {
+                        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                            after += 1;
+                        }
+                        let path = format!("/big/w/doc-{who}-{i}");
+                        for _attempt in 0..5 {
+                            let r: Result<()> = async {
+                                let mut c = s.client().await?;
+                                let mut tx = s.begin(&mut c).await?;
+                                namespace::register(&mut tx, &Register { path: path.clone(), content_hash: Some(format!("w{who}{i}")), size: 1, ..Default::default() }).await?;
+                                tx.commit().await
+                            }
+                            .await;
+                            match r {
+                                Ok(()) => {
+                                    acc.lock().push(path.clone());
+                                    break;
+                                }
+                                Err(e) => {
+                                    errs.lock().push(format!("{}:{e}", e.code()));
+                                    if after == 0 {
+                                        break; // during the move: the next write, later
+                                    }
+                                }
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                        }
+                        i += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                })
+            })
+            .collect()
     } else {
-        None
+        vec![]
     };
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     let moved = crate::tenants::move_tenant(&inst, tid, &target).await;
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
-    if let Some(w) = writer {
+    for w in writers {
         w.await.map_err(|e| Error::invalid(e.to_string()))?;
     }
     *inst.move_fault_at.write() = None;
@@ -472,7 +497,14 @@ pub async fn tenant_move(ctx: &mut Ctx) -> Result<()> {
         let in_tenant: Vec<String> = in_tx!(admin, |tx| tx.q("select c.path || '/' || a.name from artifact a join collection c on c.id = a.collection_id where c.path = '/big/w'", &[]).await?.iter().map(|r| r.get(0)).collect());
         let each_once = accepted.iter().all(|p| in_tenant.iter().filter(|x| *x == p).count() == 1) && in_tenant.len() == accepted.len();
         let errs = retry_errors.lock().clone();
-        ctx.check("Each write that mudcat accepted is in the tenant one time", each_once && errs.iter().all(|e| e.starts_with("retry:")), format!("{} accepted, {} refused: {:?}", accepted.len(), errs.len(), errs.first()));
+        // a client that had no write accepted shows nothing: both must have some, also after the move
+        let by_second = accepted.iter().filter(|p| p.contains("/doc-b-")).count();
+        let both = by_second > 0 && by_second < accepted.len();
+        ctx.check(
+            "Each write that mudcat accepted is in the tenant one time",
+            each_once && both && errs.iter().all(|e| e.starts_with("retry:")),
+            format!("{} accepted ({by_second} through the second process), {} in the tenant, {} refused: {:?}", accepted.len(), in_tenant.len(), errs.len(), errs.iter().find(|e| !e.starts_with("retry:")).or(errs.first())),
+        );
     }
     // the rows in each database
     let count_in = |db: String| {

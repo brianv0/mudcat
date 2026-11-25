@@ -41,6 +41,7 @@ These are numbers for one small machine. They show the shape of the costs and wh
 | Search (EV-9, EV-10) | p50 **310 to 350 ms** over 50,000 documents, with a spelling error or not, including the check of each result against the catalog (EV-11) |
 | Search index rebuild (OP-3) | 50,000 documents in 400 s, in one transaction, while the old version serves |
 | Tenant move (OP-14) | 12,000,738 rows (1,000,000 versions with their replicas, events and history) in 370 s: 32,000 rows per second |
+| The scope of a transaction, with the home marker of the tenant | An empty transaction: 0.14 ms (0.14 ms before the marker). With the fence of a tenant move and the second read of the marker, as each write transaction has them: 0.22 ms (0.23 ms before). At 8 clients: 0.08 ms and 0.15 ms (0.10 ms and 0.16 ms before) |
 
 ## What the measurements found
 
@@ -54,6 +55,8 @@ The first full run had several results that were far from the targets. Each had 
 | Commits under contention | 32 writers: 12 commits per second | 70 | Each commit read all members of the parent snapshot and copied its manifest references one row at a time while it held the branch lock. A commit now reads only the members that it names, takes counts and sizes from the summary of the parent, and copies the references with one statement |
 | Search | 0.95 s | 0.31 s | The spelling tolerance computed trigram similarity against every document that contains a common word. It now finds close words in the vocabulary of the index and expands the lexical query. The check of the results is one bulk check, with one audit entry for each search |
 | Lineage across models | 2 nodes | 402 nodes | The traversal did not follow `fineTunedFrom` from an entity that also had a generating activity. This was a defect, not a performance problem; the benchmark found it |
+
+**The home marker costs nothing only with prepared statements.** Each transaction now reads the row of its tenant in its first statement, and each write transaction runs two short statements more (see [implementation.md](implementation.md), "Findings"). Sent as text and planned again each time, the lookup added 0.06 ms to each transaction and 0.11 ms to each write transaction, and the rate of empty transactions at 8 clients fell from 81,000 to 46,000 per second. The three statements are now prepared one time for each connection, and the cost is the same as before the change. The numbers are from `pgbench` with the same statements on the same host, not from the Rust client. The other statements of mudcat are still sent as text and planned each time; this is a cost that the measurements above include and that a statement cache would remove.
 
 ## Open points
 

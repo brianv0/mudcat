@@ -38,9 +38,9 @@ impl From<Error> for ApiError {
 type R = Result<Json<Value>, ApiError>;
 
 /// The tenant resolver: hostname and token audience (OP-12).
-pub fn session_for(inst: &Arc<Instance>, headers: &axum::http::HeaderMap) -> Result<Session, Error> {
+pub async fn session_for(inst: &Arc<Instance>, headers: &axum::http::HeaderMap) -> Result<Session, Error> {
     let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("").split(':').next().unwrap_or("").to_string();
-    let tenant = inst.tenant_by_endpoint(&host).ok_or(Error::NotFound)?;
+    let tenant = inst.find_tenant_by_endpoint(&host).await?.ok_or(Error::NotFound)?;
     let token = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
@@ -60,8 +60,8 @@ pub struct App {
     pub inst: Arc<Instance>,
 }
 
-fn sess(app: &App, headers: &HeaderMap) -> Result<Session, ApiError> {
-    Ok(session_for(&app.inst, headers)?)
+async fn sess(app: &App, headers: &HeaderMap) -> Result<Session, ApiError> {
+    Ok(session_for(&app.inst, headers).await?)
 }
 
 pub fn router(inst: Arc<Instance>) -> Router {
@@ -105,12 +105,12 @@ async fn describe(s: &Session, id: Uuid) -> Result<Value, Error> {
 }
 
 async fn get_entity(State(app): State<App>, Path(id): Path<Uuid>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     Ok(Json(describe(&s, id).await?))
 }
 
 async fn get_jsonld(State(app): State<App>, Path(id): Path<Uuid>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let d = describe(&s, id).await?;
     Ok(Json(crate::export::to_jsonld(s.tenant_id()?, &d)))
 }
@@ -120,7 +120,7 @@ fn body<T: serde::de::DeserializeOwned>(b: Bytes) -> Result<T, ApiError> {
 }
 
 async fn post_search(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let q: search::SearchRequest = body(raw)?;
     Ok(Json(serde_json::to_value(search::search(&s, &q).await?).unwrap()))
 }
@@ -138,12 +138,12 @@ struct StreamQ {
 }
 
 async fn get_stream(State(app): State<App>, Query(q): Query<StreamQ>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     Ok(Json(serde_json::to_value(stream::poll(&s, q.from, q.limit.unwrap_or(1000), q.subscription, q.state).await?).unwrap()))
 }
 
 async fn post_backfill(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let v: Value = body(raw).unwrap_or(json!({}));
     let sub = v["subscription"].as_str().and_then(|x| x.parse().ok());
     let (pos, docs) = stream::backfill(&s, sub).await?;
@@ -151,20 +151,20 @@ async fn post_backfill(State(app): State<App>, headers: HeaderMap, raw: Bytes) -
 }
 
 async fn post_subscription(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let v: Value = body(raw)?;
     let id = stream::subscribe(&s, v["scope"].as_str().unwrap_or("/"), v["stream"].as_str().unwrap_or("state")).await?;
     Ok(Json(json!({"subscription": id, "principal": s.principal.0})))
 }
 
 async fn post_resolve(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let r: resolver::Request = body(raw)?;
     Ok(Json(serde_json::to_value(resolver::resolve(&s, &r).await?).unwrap()))
 }
 
 async fn post_resolve_again(State(app): State<App>, Path(id): Path<Uuid>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     Ok(Json(serde_json::to_value(resolver::resolve_again(&s, id).await?).unwrap()))
 }
 
@@ -177,7 +177,7 @@ struct LineageQ {
 }
 
 async fn get_lineage(State(app): State<App>, Path(id): Path<Uuid>, Query(q): Query<LineageQ>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let mut c = s.client().await.map_err(ApiError)?;
     let tx = s.begin(&mut c).await?;
     let kind = namespace::entity_kind(&tx, id).await?;
@@ -189,7 +189,7 @@ async fn get_lineage(State(app): State<App>, Path(id): Path<Uuid>, Query(q): Que
 }
 
 async fn post_query(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let v: Value = body(raw)?;
     let opts: crate::query::QueryOptions = serde_json::from_value(v.clone()).map_err(|e| ApiError(Error::invalid(e.to_string())))?;
     let mut c = s.client().await.map_err(ApiError)?;
@@ -202,7 +202,7 @@ async fn post_query(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R
 }
 
 async fn post_openlineage(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let ev: Value = body(raw)?;
     let mut c = s.client().await.map_err(ApiError)?;
     let mut tx = s.begin(&mut c).await?;
@@ -212,7 +212,7 @@ async fn post_openlineage(State(app): State<App>, headers: HeaderMap, raw: Bytes
 }
 
 async fn post_register(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let regs: Vec<namespace::Register> = body(raw)?;
     let mut c = s.client().await.map_err(ApiError)?;
     let mut tx = s.begin(&mut c).await?;
@@ -223,7 +223,7 @@ async fn post_register(State(app): State<App>, headers: HeaderMap, raw: Bytes) -
 }
 
 async fn post_commit(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let changes: Vec<datasets::DatasetChange> = body(raw)?;
     let mut c = s.client().await.map_err(ApiError)?;
     let mut tx = s.begin(&mut c).await?;
@@ -243,7 +243,7 @@ struct ChangesQ {
 }
 
 async fn get_changes(State(app): State<App>, Path(_id): Path<Uuid>, Query(q): Query<ChangesQ>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let mut c = s.client().await.map_err(ApiError)?;
     let tx = s.begin(&mut c).await?;
     crate::authz::require(&tx, "read", "read", "snapshot", q.to).await?;
@@ -256,7 +256,7 @@ struct ExportQ {
 }
 
 async fn get_export(State(app): State<App>, Path(id): Path<Uuid>, Query(q): Query<ExportQ>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let mut c = s.client().await.map_err(ApiError)?;
     let tx = s.begin(&mut c).await?;
     crate::authz::require(&tx, "export", "read", "snapshot", id).await?;
@@ -269,12 +269,12 @@ async fn get_export(State(app): State<App>, Path(id): Path<Uuid>, Query(q): Quer
 // ---------------------------------------------------------------------------- Iceberg REST
 
 async fn iceberg_config(State(app): State<App>, headers: HeaderMap) -> R {
-    let _ = sess(&app, &headers)?;
+    let _ = sess(&app, &headers).await?;
     Ok(Json(json!({"defaults": {}, "overrides": {}, "endpoints": ["GET /v1/namespaces", "GET /v1/namespaces/{namespace}/tables/{table}"]})))
 }
 
 async fn iceberg_namespaces(State(app): State<App>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let mut c = s.client().await.map_err(ApiError)?;
     let tx = s.begin(&mut c).await?;
     let roots = crate::authz::readable_roots(&tx).await?;
@@ -288,7 +288,7 @@ async fn iceberg_namespaces(State(app): State<App>, headers: HeaderMap) -> R {
 /// loadTable for a records dataset. The table metadata is generated from the manifests of the
 /// head snapshot; mudcat stores no state in Iceberg metadata files.
 async fn iceberg_load_table(State(app): State<App>, Path((ns, table)): Path<(String, String)>, headers: HeaderMap) -> R {
-    let s = sess(&app, &headers)?;
+    let s = sess(&app, &headers).await?;
     let mut c = s.client().await.map_err(ApiError)?;
     let tx = s.begin(&mut c).await?;
     let did = match table.parse::<Uuid>() {
@@ -321,7 +321,7 @@ async fn iceberg_load_table(State(app): State<App>, Path((ns, table)): Path<(Str
 
 /// The MCP server for agents (IN-6). It runs with the identity and permissions of the caller.
 async fn post_mcp(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> Response {
-    let s = match sess(&app, &headers) {
+    let s = match sess(&app, &headers).await {
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };

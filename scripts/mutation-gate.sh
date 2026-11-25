@@ -15,6 +15,8 @@ cd "$(dirname "$0")/.."
 STAMP="$(git rev-parse HEAD) dirty=$([ -n "$(git status --porcelain --untracked-files=no -- ':(top)' ':(top,exclude)evals/results')" ] && echo yes || echo no)"
 
 ALL=(no-invalidation expired-grant-ok no-compartment search-no-recheck no-stream-filter wide-prefix merkle-constant tag-ref-movable no-branch-lock relay-xid-rule)
+# the tenant move with more than one server process (tests/tenant_move_processes.rs, T5.4)
+ALL+=(no-home-check no-move-fence cleanup-no-drain)
 RUNS_TIMING=3   # defects that depend on timing run this many times
 TIMING=(relay-xid-rule)
 

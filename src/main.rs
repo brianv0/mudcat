@@ -34,6 +34,8 @@ enum Cmd {
     Token { tenant: String, principal: String, #[arg(long, default_value_t = 8)] hours: i64 },
     /// Move a tenant to another database.
     MoveTenant { tenant: String, database: String },
+    /// Remove the rows that a tenant left in a database, when the report of a move said that they stayed.
+    RemoveLeftRows { tenant: String, database: String },
     /// Print the authorization schema for an external service (spicedb or openfga).
     AuthzSchema { target: String },
 }
@@ -82,6 +84,10 @@ async fn main() -> anyhow::Result<()> {
         Cmd::MoveTenant { tenant, database } => {
             let t = inst.tenant_by_name(&tenant).ok_or_else(|| anyhow::anyhow!("no tenant {tenant}"))?;
             println!("{}", mudcat::tenants::move_tenant(&inst, t.id, &database).await?);
+        }
+        Cmd::RemoveLeftRows { tenant, database } => {
+            let t = inst.tenant_by_name(&tenant).ok_or_else(|| anyhow::anyhow!("no tenant {tenant}"))?;
+            println!("{}", mudcat::tenants::remove_left_rows(&inst, t.id, &database, std::time::Duration::from_secs(600)).await?);
         }
         Cmd::AuthzSchema { .. } => unreachable!(),
     }

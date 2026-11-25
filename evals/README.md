@@ -166,7 +166,7 @@ For each variant the runner makes a fresh tenant, builds the fixture from the pa
 
 ## The mutation gate
 
-`scripts/mutation-gate.sh` is the test of the checks. The cargo feature `mutants` makes `mudcat::mutant(name)` true when the environment variable `MUDCAT_MUTANT` has that name; without the feature it is a constant `false`, so a normal build has no switch. Ten defects, each a change of one line, are behind it:
+`scripts/mutation-gate.sh` is the test of the checks. The cargo feature `mutants` makes `mudcat::mutant(name)` true when the environment variable `MUDCAT_MUTANT` has that name; without the feature it is a constant `false`, so a normal build has no switch. Thirteen defects, each a change of one line or a few, are behind it:
 
 | Defect | Where | What it does |
 |---|---|---|
@@ -180,12 +180,15 @@ For each variant the runner makes a fresh tenant, builds the fixture from the pa
 | `tag-ref-movable` | datasets.rs, `commit_one` | a commit can move a tag ref |
 | `no-branch-lock` | datasets.rs, `commit_one` | the branch ref is read with no `for update` |
 | `relay-xid-rule` | stream.rs, `relay_batch` | the relay uses the rule of the first version of architecture.md (publish rows of transactions older than every transaction in progress) |
+| `no-home-check` | instance.rs, `Session::begin` and `Tx::commit_id` | a transaction trusts the registry of its process, and does not read the home marker of its tenant in the database |
+| `no-move-fence` | instance.rs, `Tx::commit_id` | a writer does not take the fence of a tenant move |
+| `cleanup-no-drain` | tenants.rs, `remove_from_source` | a move removes the rows in the old database at once, with open transactions that read them |
 
 For the baseline and for each defect, the script runs the smoke evals and `cargo test`, and writes `evals/results/mutation-gate.txt`: the templates that failed, the tests that failed, and "detected" or "NOT DETECTED". `relay-xid-rule` depends on timing and runs three times; it counts as detected only if every run detects it. The script exits with an error if a defect is not detected or if the baseline is not green. It takes about 40 minutes in a debug build (its own target directory, `target/mutants`). In CI it is a workflow that is started by hand.
 
 ## What the evals do not detect
 
-The first probe seeded ten defects, one at a time, and ran the 280 variants and the scenario tests against each. The variants detected five, the scenario tests three more, and two passed everything (a Merkle hash that is a constant; events out of commit order). The probe is now the mutation gate, and checks were added for the two. At the last commit of this work the gate (`evals/results/mutation-gate.txt`) detects all ten. How each is detected:
+The first probe seeded ten defects, one at a time, and ran the 280 variants and the scenario tests against each. The variants detected five, the scenario tests three more, and two passed everything (a Merkle hash that is a constant; events out of commit order). The probe is now the mutation gate, and checks were added for the two. Three more defects came with the correction of the tenant move (see below). The gate (`evals/results/mutation-gate.txt`) detects all thirteen. How each is detected:
 
 | Defect | By the variants | By tests |
 |---|---|---|
@@ -195,12 +198,15 @@ The first probe seeded ten defects, one at a time, and ran the 280 variants and 
 | `merkle-constant` | INV-2 computes the hash again from the members | a unit test with vectors from `sha256sum` |
 | `relay-xid-rule` | by chance only (one T4.1 variant in 2 of 3 runs at the smoke scale) | `tests/stream_order.rs`, with a fixed interleaving of three transactions; it fails every time with the defect |
 | `no-stream-filter`, `tag-ref-movable` | no | only the scenario tests (uc4_05, uc2_06) |
+| `no-home-check` | T5.4, the variants with writes (a second server process writes during and after the move) | `tests/tenant_move_processes.rs` |
+| `no-move-fence`, `cleanup-no-drain` | no | `tests/tenant_move_processes.rs`, with fixed steps |
 
 What stays weak:
 
 - **Ten defects are few.** They were chosen by the author of the implementation, for mechanisms that the design calls necessary. A defect that nobody thought of is not tested. Most requirements have no defect of their own.
 - **Two defects are detected only by scenario tests.** No variant of the templates has a subscription that must not get the events of a different ACL root, and none tries to move a tag ref.
-- **Interleavings.** Only the order of events has a test with fixed interleavings. The branch requirement of commits (T1.2 detects `no-branch-lock` only by load, with 2 to 32 writers) and the fence of a tenant move have none.
+- **A defect that the gate could not show: one process.** With all ten defects detected and 280 of 280 variants green, a tenant move still lost writes. Each check ran the mover and the clients in one process, and the implementation kept the routing of tenants in the memory of the process. A defect in a mechanism can be seeded; an assumption that every check shares cannot. It was found when the fence of the move was to get a test with fixed steps, and the first question was what a second process does. Now `tests/tenant_move_processes.rs` uses two instances on the same databases, and T5.4 has a second process that writes. Other assumptions that every check still shares: one database server, one database role, a clock that the instance controls, and storage in the same process.
+- **Interleavings.** The order of events and the fence of a tenant move have tests with fixed steps. The branch requirement of commits has none (T1.2 detects `no-branch-lock` only by load, with 2 to 32 writers).
 - **Same author.** The drivers and the checks have the same author as the implementation, and in places they read and write the database directly, not only through the interfaces of mudcat. A pass is weaker evidence than its number suggests.
 - **Unit tests.** `query.rs` is tested for the SQL text and parameters of the predicate only; its path-glob part is built inside `run`, which needs a transaction, and has scenario tests only.
 - **CI.** The workflows in `.github/workflows/` were written and parsed, not run on a hosted runner, in the session that made them.

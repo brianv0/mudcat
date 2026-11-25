@@ -295,8 +295,52 @@ impl Instance {
         self.tenants.read().values().find(|t| t.endpoint == endpoint).cloned()
     }
 
+    /// Read one tenant from the table `tenant` of the shared database into the registry of this
+    /// process. The registry is a cache of that table: another process can make or move a
+    /// tenant. `None`: there is no such tenant, and it leaves the registry.
+    pub async fn reload_tenant(&self, id: Uuid) -> Result<Option<TenantInfo>> {
+        let c = self.shared.get().await?;
+        let row = c.query_opt("select id, name, endpoint, status, location from tenant where id = $1", &[&id]).await?;
+        drop(c);
+        let mut map = self.tenants.write();
+        match row {
+            Some(r) => {
+                let t = TenantInfo { id: r.get(0), name: r.get(1), endpoint: r.get(2), status: r.get(3), location: r.get(4) };
+                map.insert(t.id, t.clone());
+                Ok(Some(t))
+            }
+            None => {
+                map.remove(&id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// The tenant of an endpoint. On a miss the table is read, so that a process finds a tenant
+    /// that another process made.
     pub async fn find_tenant_by_endpoint(&self, endpoint: &str) -> Result<Option<TenantInfo>> {
-        Ok(self.tenant_by_endpoint(endpoint))
+        if let Some(t) = self.tenant_by_endpoint(endpoint) {
+            return Ok(Some(t));
+        }
+        let c = self.shared.get().await?;
+        let row = c.query_opt("select id, name, endpoint, status, location from tenant where endpoint = $1", &[&endpoint]).await?;
+        drop(c);
+        Ok(row.map(|r| {
+            let t = TenantInfo { id: r.get(0), name: r.get(1), endpoint: r.get(2), status: r.get(3), location: r.get(4) };
+            self.tenants.write().insert(t.id, t.clone());
+            t
+        }))
+    }
+
+    /// The error for a transaction in a database that is not the home of its tenant. The
+    /// registry of this process takes the entry again first, so the client that tries again
+    /// gets the right database. A tenant that does not exist is not found.
+    async fn not_at_home(&self, id: Uuid) -> Error {
+        match self.reload_tenant(id).await {
+            Ok(Some(_)) => Error::Retryable("the tenant is in another database, or it is moving; try again".into()),
+            Ok(None) => Error::NotFound,
+            Err(e) => e,
+        }
     }
 
     pub fn tenant_by_name(&self, name: &str) -> Option<TenantInfo> {
@@ -321,6 +365,18 @@ impl Instance {
     pub fn session_without_tenant(self: &Arc<Self>) -> Session {
         Session { inst: self.clone(), tenant: None, principal: Principal::system(), place: None }
     }
+}
+
+/// Is a tenant at home in the database of a transaction? `marker` is `status|location` of the
+/// row of the tenant in the table `tenant` of that database, and `location` is the name that the
+/// registry of this process has for the database. In the shared database the row is the registry
+/// entry, so its location must be the shared tier. A dedicated database has a row only for a
+/// tenant that lives in it. A tenant that is moving can be read where it is, and not written;
+/// a tenant that has moved away can be neither.
+fn at_home(marker: Option<&str>, location: &str, write: bool) -> bool {
+    let Some((status, row_location)) = marker.and_then(|m| m.split_once('|')) else { return false };
+    let here = if location == "shared" { row_location == "shared" } else { row_location == "dedicated" };
+    here && (status == "active" || (status == "moving" && !write))
 }
 
 async fn ensure_database(url: &str) -> Result<()> {
@@ -405,8 +461,23 @@ impl Session {
     pub async fn begin<'a>(&'a self, client: &'a mut deadpool_postgres::Object) -> Result<Tx<'a>> {
         let t = client.transaction().await?;
         let tenant = self.tenant.map(|t| t.to_string()).unwrap_or_default();
-        t.execute("select set_config('mudcat.tenant', $1, true)", &[&tenant]).await?;
         let location = self.tenant.and_then(|t| self.inst.tenant(t)).map(|t| t.location).unwrap_or_else(|| "shared".into());
+        // One statement sets the tenant of the transaction and reads the home marker of the
+        // tenant in this database. The registry of this process is a cache: another process can
+        // have moved the tenant, and then this database is not the place to read or to write.
+        // (The statement is prepared one time for each connection: a statement that is planned
+        // again in each transaction costs more than the lookup.)
+        let begin = t
+            .prepare_cached("select set_config('mudcat.tenant', $1, true), (select status || '|' || location from tenant where id = nullif($1, '')::uuid)")
+            .await?;
+        let row = t.query_one(&begin, &[&tenant]).await?;
+        if let Some(id) = self.tenant {
+            let marker: Option<String> = row.get(1);
+            if !at_home(marker.as_deref(), &location, false) && !crate::mutant("no-home-check") {
+                drop(t);
+                return Err(self.inst.not_at_home(id).await);
+            }
+        }
         Ok(Tx { t, sess: self, commit: None, now: self.now(), location, emitted: false })
     }
 
@@ -464,18 +535,32 @@ impl<'a> Tx<'a> {
         }
         let tenant = self.sess.tenant_id()?;
         // during a move, refuse at once; the client tries again
-        if self.sess.inst.tenant(tenant).map(|t| t.status == "moving").unwrap_or(false) {
-            return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
-        }
-        // the fence of a tenant move: writers hold a shared lock; the move takes it exclusively
-        let db: String = self
-            .t
-            .query_one("select current_database()::text from (select pg_advisory_xact_lock_shared(hashtextextended($1, 11))) x", &[&tenant.to_string()])
-            .await?
-            .get(0);
         if let Some(t) = self.sess.inst.tenant(tenant) {
-            if t.status == "moving" || t.location != self.location || db != self.sess.inst.db_name(&t.location) {
+            if t.status == "moving" || t.location != self.location {
                 return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
+            }
+        }
+        if !crate::mutant("no-move-fence") {
+            // The fence of a tenant move. A writer holds this lock, shared, to the end of its
+            // transaction, and the mover takes it exclusively before it copies. The writer does
+            // not wait for it: a mover that holds the lock, or that waits for it, makes this
+            // request fail, and the client tries again. So the mover waits only for the writers
+            // that had passed the fence, and new writers cannot keep it waiting.
+            let fence = self.t.prepare_cached("select pg_try_advisory_xact_lock_shared(hashtextextended($1, 11))").await?;
+            let passed: bool = self.t.query_one(&fence, &[&tenant.to_string()]).await?.get(0);
+            if !passed {
+                return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
+            }
+        }
+        if !crate::mutant("no-home-check") {
+            // With the fence, read the home marker again. The registry of this process cannot
+            // answer: another process can have moved the tenant. This is a statement of its own
+            // (under READ COMMITTED it sees what the mover committed before it opened the
+            // fence); a transaction with one snapshot for all its statements would not see it.
+            let home = self.t.prepare_cached("select status || '|' || location from tenant where id = $1").await?;
+            let marker: Option<String> = self.t.query_opt(&home, &[&tenant]).await?.map(|r| r.get(0));
+            if !at_home(marker.as_deref(), &self.location, true) {
+                return Err(self.sess.inst.not_at_home(tenant).await);
             }
         }
         let id: i64 = self.t.query_one("select nextval('commit_seq')", &[]).await?.get(0);
@@ -593,4 +678,32 @@ pub fn new_id() -> Uuid {
 pub fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     hex::encode(Sha256::digest(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::at_home;
+
+    #[test]
+    fn the_home_marker() {
+        // the shared database: the row is the registry entry, and must name the shared tier
+        assert!(at_home(Some("active|shared"), "shared", true));
+        assert!(at_home(Some("active|shared"), "shared", false));
+        assert!(!at_home(Some("active|mudcat_ded_1"), "shared", false), "the tenant moved to a dedicated database");
+        // a dedicated database: a row only for a tenant that lives there
+        assert!(at_home(Some("active|dedicated"), "mudcat_ded_1", true));
+        assert!(!at_home(None, "mudcat_ded_1", false), "the tenant left, and its row is gone");
+        assert!(!at_home(Some("moved|dedicated"), "mudcat_ded_1", false), "the tenant left, and its rows wait for removal");
+        // a registry that names the wrong tier for this database
+        assert!(!at_home(Some("active|dedicated"), "shared", false));
+        assert!(!at_home(Some("active|shared"), "mudcat_ded_1", false));
+        // a tenant that is moving is read where it is, and not written
+        assert!(at_home(Some("moving|shared"), "shared", false));
+        assert!(!at_home(Some("moving|shared"), "shared", true));
+        assert!(at_home(Some("moving|dedicated"), "mudcat_ded_1", false));
+        assert!(!at_home(Some("moving|dedicated"), "mudcat_ded_1", true));
+        // no row, or a row that is not a marker
+        assert!(!at_home(None, "shared", false));
+        assert!(!at_home(Some(""), "shared", false));
+    }
 }

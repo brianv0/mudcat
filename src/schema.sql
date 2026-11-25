@@ -23,8 +23,8 @@ create table if not exists tenant (
   id          uuid primary key,
   name        text not null unique,
   endpoint    text not null unique,
-  status      text not null default 'active',      -- active | moving
-  location    text not null default 'shared',      -- the database that holds the rows
+  status      text not null default 'active',      -- active | moving | moved (a dedicated database that the tenant left)
+  location    text not null default 'shared',      -- shared database: the database that holds the rows; dedicated database: 'dedicated'
   created_at  timestamptz not null
 );
 
