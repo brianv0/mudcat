@@ -186,10 +186,57 @@ A recursive query over all provenance relations does not scale. mudcat uses thes
 
 All writes from bulk clients and site agents go through a queue to a batched writer. This writer commits in large transactions. Before the Butler adopted this pattern, it measured inserts from hundreds of concurrent workers that took up to ten minutes.
 
+- **Registration commits.** The writer applies registration commits (see the next section). A client that registers one file at a time gets the same treatment: the writer groups the single requests that wait into one commit for each short interval, and gives each caller the outcome of its own entry.
 - **Idempotency:** the key for registration is (artifact, content checksum), so retries are harmless.
 - **Ordering:** registration commits catalog rows before a producer may delete its staged copy. This avoids the Butler's orphaned-file problem in reverse.
 
 Interactive single writes bypass the queue but use the same transaction code.
+
+### Registration commits
+
+Iceberg has the operation `AppendFiles`: writers put data files in storage, write manifests that list them, and then make all of them visible with one commit. mudcat has the same operation for files of any kind. It is the **registration commit**.
+
+**Two steps.**
+
+1. **Stage.** A client sends entries in parts. A part is an Arrow table with one row for each entry. mudcat validates each part and stores it, but no reader sees it. Many clients can send parts for the same commit at the same time, for example the tasks of one Ray job.
+2. **Commit.** One client, for example the driver of the job, sends the commit. It names the staged parts, the requirements and, optionally, a dataset branch. mudcat tests the requirements and the expectation of each entry against the newest state. Then it makes all entries visible in one transaction, or none.
+
+Thus the tasks of a job never commit. Only the driver commits, one time. Spark and Iceberg divide the work in the same way.
+
+**An entry** has the path or the ID of an artifact, the content checksums, the size, one or more replica locations, the structure and the format, the source, and metadata payloads.
+
+**Each entry has an expectation.** This is the optimistic concurrency of registration. mudcat compares each entry with what the catalog holds at the time of the commit:
+
+| Expectation of the entry | The path is free | The artifact exists with the same content | The artifact exists with other content |
+|---|---|---|---|
+| `create` | Created | Unchanged | Conflict |
+| `new-version`, with the version that the writer expects as the latest | Conflict | Unchanged | A new version, if the latest version is the expected one. If not, a conflict |
+| `create-or-new-version` | Created | Unchanged | A new version |
+| `add-replica` | Conflict | A replica is added | Conflict |
+
+- **Unchanged is not a conflict.** An entry whose content is already registered changes nothing. Thus a client can send a commit again after a failure, and a commit whose entries are all unchanged makes no events.
+- **One conflict refuses the complete commit.** The answer lists each entry with a conflict, with the present version and the commit that made it. The staged parts stay, so the client can correct the commit and send it again with no new upload.
+- **The answer gives the outcome of each entry:** created, new version, replica added or unchanged.
+
+**Requirements on the commit** use the kinds of the section before. Examples are `assert-create` for a collection that the commit makes, and `assert-unchanged-in` for a collection where no other writer may register in the same period.
+
+**Registration and membership in one commit.** A registration commit can also append the new versions to a branch ref of a dataset. A reader then never sees files that are in the collection and not yet in the dataset. An append has no requirement on other members, so it does not conflict with other appends.
+
+**Visibility.** Staged entries are rows in the catalog database with the ID of their part. A reader sees an entry only when a commit record refers to its part. Thus the commit itself writes few rows, and the time for which it holds a lock does not grow with the number of entries. The checks for conflicts run before the lock, and run again only for the paths that changed in between.
+
+**Staged parts expire.** mudcat removes a staged part that no commit used after TBD hours. The files that the part describes are then files with no catalog entry, and the consistency check of the site agents reports them.
+
+**One file with HTTP.** A request that registers one artifact can use the standard preconditions of HTTP. The entity tag of an artifact is the ID of its latest version.
+
+| Request | Meaning | Answer when the precondition is false |
+|---|---|---|
+| `PUT` with `If-None-Match: *` | `create` | 412 |
+| `PUT` with `If-Match` and an entity tag | `new-version`, with that version as the expected latest | 412 |
+| `PUT` with no precondition | `create-or-new-version` | — |
+
+The answer is 201 for a new artifact or a new version, and 200 with the present state for an unchanged entry. These requests go through the ingest writer and use the same code as a commit with one entry.
+
+**What Datacat did.** Datacat also made the outcome of a registration depend on a comparison of the request with the stored state, with HTTP. It had one `POST` for each dataset. The target of the request (a folder, a dataset or a version) decided what the request made. An entry that existed and was equal gave 302. An entry that differed gave 409. An entry that existed in part gave 409 with the address at which the client had to continue. mudcat keeps the comparison and the result for each entry. It changes three things: many entries in one request, one atomic commit for all of them, and the standard preconditions of HTTP instead of a negotiation with redirects.
 
 ### Catalog database
 
@@ -771,8 +818,8 @@ Three mechanisms make this work without shared mutable state:
 
 1. A bucket event or inventory report reaches a site agent.
 2. The agent runs the applicable format plugin. The plugin produces a structure descriptor, metadata and fingerprints, and an element list if the structure has one.
-3. The agent submits a batch of versions and replicas to the ingest writer. If there is an element list, the batch also has a manifest version.
-4. The writer commits the batch, and the outbox emits events.
+3. The agent stages a part with the versions and the replicas. If there is an element list, the part also has a manifest version.
+4. The agent sends a registration commit for its parts. The writer applies it, and the outbox emits events.
 5. Index builders update search and identity indexes.
 
 ### Publish a snapshot

@@ -189,6 +189,7 @@ Identifier prefixes:
 | IN-14 | mudcat shall pass the namespace and table tests of the Iceberg REST Compatibility Kit against its Iceberg REST gateway. | The kit is the conformance suite of the Iceberg project for REST catalogs, and it runs the tests of the reference client against a server. | T |
 | IN-15 | mudcat shall list, in the configuration response of the Iceberg REST gateway, the endpoints that the gateway implements. | The specification lets a server state its endpoints, and clients then do not call the others; the gateway does not implement views in its first scope. | T |
 | IN-16 | mudcat shall accept, through the Iceberg REST gateway, the creation of a table, a commit to a table, a rename of a table and a drop of a table. | Engines must be able to write Iceberg tables with mudcat as their only catalog, and the compatibility kit needs a writable catalog. | T |
+| IN-17 | mudcat shall apply the HTTP preconditions If-Match and If-None-Match to a request that registers one artifact, with the ID of the latest version of the artifact as the entity tag. | Simple clients register one file with one request, and HTTP already has a standard for conditional writes. | T |
 
 ## Change stream and search
 
@@ -236,6 +237,13 @@ Identifier prefixes:
 | OP-9 | mudcat shall connect site agents to the control plane only through connections that the agents open. | Customers must not need to open inbound ports. | D |
 | OP-10 | mudcat shall export a complete tenant in a form that the self-hosted release can import. | Customers must be able to leave the hosted service without loss. | T |
 | OP-11 | mudcat shall keep the metadata of each tenant in the region that the tenant selects. | Metadata can be sensitive and subject to residency rules. | I |
+| OP-16 | mudcat shall make all entries of one registration commit visible in one transaction, or none of them. | A job that writes many files must not leave a part of its output in the catalog; Iceberg's append of files has the same property. | T |
+| OP-17 | mudcat shall accept the entries of one registration commit in more than one staged part, from more than one client. | The tasks of a distributed job each know their own files, and only the driver of the job can commit. | T |
+| OP-18 | mudcat shall test, for each entry of a registration commit, one of the expectations create, new-version, create-or-new-version and add-replica against the newest state of the catalog. | Two writers that register at the same path must not overwrite each other without notice; Datacat made the same comparison for each dataset over HTTP. | T |
+| OP-19 | mudcat shall return, for each entry of a registration commit, one of the outcomes created, new version, replica added, unchanged and conflict. | A writer must know what the commit did with each file. | T |
+| OP-20 | mudcat shall keep the staged parts of a registration commit that it refused, until they expire. | A writer must be able to correct a commit of millions of entries with no new upload. | T |
+| OP-21 | mudcat shall append the versions of a registration commit to a branch ref of a dataset in the transaction of that commit, when the commit names the branch ref. | A reader must not see files that are registered and not yet members of their dataset. | T |
+| OP-22 | mudcat shall remove a staged part that no commit used after TBD hours. | Parts of jobs that failed must not stay in the catalog database. | T |
 
 ## Performance and scale
 
@@ -260,6 +268,7 @@ Identifier prefixes:
 | PF-17 | mudcat shall return at least 95% (TBR) of the 10 exact nearest neighbours for a vector search with a filter that 0.1% to 100% of the items pass. | A filter that few items pass makes approximate vector search lose results. | T |
 | PF-18 | mudcat shall get a mean reciprocal rank at 10 of 0.85 (TBR) or more for the changed-name queries of the search benchmark. | People remember names with errors: a wrong letter, joined words, or a part of a path. | T |
 | PF-19 | mudcat shall return the first page of a search by meaning in 500 ms (TBR) or less at percentile 95, over 10^7 (TBR) search documents with 20 (TBR) concurrent callers. | Search by meaning needs an embedding of the query and a vector search, and still must keep the attention of a person. | T |
+| PF-20 | mudcat shall hold the locks of a registration commit with 10^6 (TBR) staged entries for 1 s (TBR) or less. | A large commit must not stop the other writers of the same collection or the same branch ref. | T |
 
 ## Queries the system must answer
 

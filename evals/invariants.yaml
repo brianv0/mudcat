@@ -116,3 +116,8 @@
   statement: No count in a search answer includes an entity that the caller cannot read.
   observe: Compare each total and each facet count with the number of matches that the caller can read.
   verifies: [EV-19]
+
+- id: INV-24
+  statement: A reader sees all entries of a registration commit or none of them.
+  observe: A reader lists the collection and the dataset again and again while commits run. Each answer has all entries of each commit that it shows.
+  verifies: [OP-16, OP-21]

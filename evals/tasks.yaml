@@ -224,6 +224,92 @@
   verifies: [ID-16, ID-17, ID-19, EV-1]
   reference: UC1-02
 
+- id: T1.7
+  use_case: 1
+  name: register-many-files
+  goal: Register the output files of a job, and make all of them visible at one time.
+  axes:
+    entries: [all-new, some-registered-before-with-the-same-content, some-paths-hold-other-content, an-expected-version-is-not-the-latest]
+    parts: [one-part, many-parts-from-many-workers]
+    dataset: [no-dataset, append-to-a-branch-ref]
+  cover:
+    files: [1000, 5000000]
+    structure: [opaque, container, array]
+  fixture: >
+    A job wrote {files} files of the structure {structure} to storage. It stages their entries in
+    {parts}, and its driver sends one registration commit, with {dataset}. State of the catalog at the
+    time of the commit: {entries}.
+  distractors:
+    - A second job registers other files in the same collection at the same time.
+  oracle:
+    - if: {entries: all-new}
+      then: {outcome: committed}
+    - if: {entries: some-registered-before-with-the-same-content}
+      then: {outcome: committed-with-unchanged-entries}
+    - else: {outcome: refused-completely}
+  checks:
+    - check: Before the commit, no reader sees an entry of the staged parts.
+    - check: The commit of the second job succeeds.
+    - outcome: [committed, committed-with-unchanged-entries]
+      check: All entries are visible at one position of the change stream. The answer gives the outcome of each entry.
+    - outcome: committed-with-unchanged-entries
+      check: Each entry that was registered before has the outcome unchanged, and gets no new version and no event.
+    - outcome: [committed, committed-with-unchanged-entries]
+      when: {dataset: append-to-a-branch-ref}
+      check: The new versions are members of the dataset in the same commit. No reader sees a file that is in the collection and not in the dataset.
+    - outcome: [committed, committed-with-unchanged-entries]
+      when: {parts: many-parts-from-many-workers}
+      check: No worker sent a commit. The commit of the driver names each part.
+    - outcome: refused-completely
+      check: No entry of the commit is visible. The answer lists each entry with a conflict, with the present version and the commit that made it.
+    - outcome: refused-completely
+      check: The staged parts still exist. A second commit with corrected expectations succeeds with no new upload.
+    - outcome: refused-completely
+      when: {dataset: append-to-a-branch-ref}
+      check: The branch ref of the dataset did not move.
+  invariants: [INV-5, INV-13, INV-24]
+  verifies: [OP-16, OP-17, OP-18, OP-19, OP-20, OP-21, OP-5, IN-3]
+  reference: UC1-01
+
+- id: T1.8
+  use_case: 1
+  name: two-writers-register
+  goal: Two writers register at the same time. Neither one overwrites the other without notice.
+  axes:
+    overlap: [different-paths, the-same-path-and-the-same-content, the-same-path-and-other-content]
+    expectation: [create, create-or-new-version, new-version-with-an-expected-latest]
+  cover:
+    interface: [one-commit-for-each-writer, one-http-request-with-a-precondition-for-each-writer]
+  fixture: >
+    Two writers each register one file at the same time, through {interface}. Their files have
+    {overlap}. Each entry has the expectation {expectation}. With the last expectation, the artifact
+    exists with version 1, and each writer expects version 1 as the latest.
+  oracle:
+    - if: {overlap: different-paths}
+      then: {outcome: both-succeed}
+    - if: {overlap: the-same-path-and-the-same-content}
+      then: {outcome: both-succeed-with-one-version}
+    - if: {expectation: create-or-new-version}
+      then: {outcome: both-succeed-with-two-versions}
+    - else: {outcome: one-succeeds-one-is-refused}
+  checks:
+    - outcome: both-succeed
+      check: Each writer gets the outcome created or new version, with no retry.
+    - outcome: both-succeed-with-one-version
+      check: The artifact has one new version. One writer gets the outcome created or new version, and the other gets the outcome unchanged.
+    - outcome: both-succeed-with-two-versions
+      check: The artifact has two new versions, in the order of the commits, and latest names the second one.
+    - outcome: one-succeeds-one-is-refused
+      check: One writer succeeds. The other gets a conflict that names the path, the present version and the commit that made it.
+    - outcome: one-succeeds-one-is-refused
+      check: The content of the first writer is the latest version. No content was replaced without notice.
+    - outcome: one-succeeds-one-is-refused
+      when: {expectation: new-version-with-an-expected-latest}
+      check: The conflict states that the latest version is 2 and not 1.
+  invariants: [INV-5, INV-24]
+  verifies: [OP-18, OP-19, IN-17, ID-19, OP-5]
+  reference: UC1-02
+
 # ---------------------------------------------------------------- use case 2
 
 - id: T2.1
