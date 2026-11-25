@@ -1,14 +1,15 @@
 # mudcat evals
 
-Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the eight grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have three layers.
+Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the eight grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have four layers.
 
 | Layer | File | Content |
 |---|---|---|
-| Invariants | [invariants.yaml](invariants.yaml) | 21 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 32 tasks with variation. `generate.py` expands them into 527 variants |
+| Invariants | [invariants.yaml](invariants.yaml) | 23 statements that are true after each step of each eval |
+| Task templates | [tasks.yaml](tasks.yaml) | 38 tasks with variation. `generate.py` expands them into 627 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
+| Benchmarks | [benchmarks/](benchmarks/) | Measured evals. The first one is for search: 13 query classes, 17 measures and 21 targets |
 
-Run `python3 evals/check.py` from the repository root. It validates the three layers, and prints the coverage and the gaps.
+Run `python3 evals/check.py` from the repository root. It validates the four layers, and prints the coverage and the gaps.
 
 ## How a task is designed
 
@@ -62,24 +63,30 @@ These rules make a task effective:
 | T1.1 resolve-and-read | Get the data of a dataset for a training job | structure, storage mode, invalidated members | number of members | 30 |
 | T1.2 concurrent-commits | Many writers change one branch, and no change is lost | kind of change, overlap of members | number of writers | 7 |
 | T1.3 stage-near-compute | Have a verified copy near the cluster, then resolve there | fault in the transfer, place option | kind of target, number of members | 12 |
+| T1.5 find-clips | Find clips by a text or by an example, inside a filter | kind of query, selectivity of the filter, state of the data | | 18 |
 | T2.1 combine-methods | Publish one dataset from two | methods, declared equivalence, step | | 8 |
 | T2.2 leakage-check | Find out if test data is related to training inputs | criterion, number of related elements | | 12 |
 | T2.3 reproduce-later | Get the training inputs again after one year | change since the first resolution | | 7 |
+| T2.4 filter-by-metadata | Narrow a large collection by a typed attribute | kind of attribute, condition, kind of answer | | 24 |
 | T3.1 policy-gate | Get data for an action and a purpose | action, purpose, state of the sources, scope | | 40 |
 | T3.2 removal | Remove content at one of five levels | level, legal hold, point of removal, storage | | 60 |
 | T3.3 content-summary | Make the summary of training content | kinds of source, base models, completeness of records | number of sources | 20 |
 | T4.1 stream-consumer | Keep an outside index equal to the catalog | state of the consumer, rollbacks | number of writers | 9 |
 | T4.2 retrieval-after-change | The next request shows a change at once | kind of change, kind of request | | 18 |
+| T4.3 search-after-a-write | Search for a thing directly after a change to it | kind of change, age of the change, kind of answer | | 24 |
+| T4.4 question-from-an-agent | An agent finds data for a user through the MCP server | kind of question, origin of the metadata | | 8 |
 | T5.1 tenant-isolation | Get only the data of the own tenant | token, endpoint, target | interface | 28 |
 | T5.2 embargo | Read a dataset that has an embargo date | time, actor, data in a DOI snapshot or not | | 12 |
 | T5.3 membership-source | Access follows the membership of an outside team | event, kind of grant | kind of request | 9 |
 | T5.4 tenant-move | Move a tenant to its own database | fault, consumer, writes during the move | number of versions | 8 |
+| T5.6 small-readable-share | Search where the caller can read a small part | readable share, number of matches, facets | | 14 |
 | T6.1 group-discovered-paths | See one logical dataset for files that nobody registered | pattern of the paths, grouping rules, checksums | number of files | 17 |
 | T6.2 find-unregistered | Find a dataset of another team with no help from that team | what the user knows, who described it, access | | 16 |
 | T6.3 audit-by-field | List each dataset that contains a sensitive field | kind of evidence, propagation of the tag | | 8 |
 | T6.4 upstream-problem | Find the cause upstream and the users downstream | cause, path, capture mode | | 18 |
 | T6.5 watch-a-dataset | Get an alert when a dataset changes in a way that nobody expected | change, severity, step | | 20 |
 | T6.6 discovered-data | Find and use data that nobody registered | origin of the entry, kind of request | number of files | 10 |
+| T6.7 name-with-changes | Find a thing whose name the person does not remember exactly | kind of query, qualifier | | 12 |
 | T7.1 run-view | Get the data, the checks and the code that made one model | history of the pipeline, state of the model | capture mode | 7 |
 | T7.2 rolling-window | Train each day on the last days of data, with no copy | change after the last run, request | | 8 |
 | T7.3 validation-gate | Stop a run before training when its input fails a check | state of the data, option of the request | | 8 |
@@ -92,7 +99,7 @@ These rules make a task effective:
 | T8.4 import-and-train | Train on a public dataset together with own data | licence, purpose, reach of the files | format of the description | 17 |
 | T8.5 the-original-changes | Know when a public dataset changed or went away | state of the original, use in the tenant | | 10 |
 
-Variants for each use case: 49, 27, 120, 27, 57, 89, 79 and 79.
+Variants for each use case: 67, 51, 120, 59, 71, 101, 79 and 79.
 
 `generate.py` has these options:
 
@@ -104,6 +111,18 @@ Variants for each use case: 49, 27, 120, 27, 57, 89, 79 and 79.
 | `python3 evals/generate.py --write` | Writes all variants to `evals/generated/variants.jsonl`, one JSON object for each line |
 
 The file `variants.jsonl` is derived. It is not in the repository.
+
+## Benchmarks
+
+A task has a result that is true or false. A benchmark has a result that is a number: a quality score, a latency, a lag. [benchmarks/search.yaml](benchmarks/search.yaml) is the first benchmark. [docs/search.md](../docs/search.md) explains its use cases and its targets. The file has:
+
+- **corpora** of 10^5, 10^7 and 10^8 search documents, and the properties that make search hard;
+- **query classes**, each with the way to make the queries and the way to know the correct answer. Twelve of the 13 classes need no person to judge the results;
+- **measures** for quality, speed, freshness, permissions and cost;
+- **targets**, each with a requirement ID and the status `firm` or `TBR`;
+- the **procedure** and the **baselines**.
+
+`check.py` makes sure that each query class has a target for quality and a target for speed, and that each target refers to a requirement.
 
 ## Invariants
 
@@ -170,11 +189,12 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A request for own data and public data together is refused completely when the terms of the public data do not permit it.
   - A person with no access to a discovered dataset does not find it in a search. Goods showed the metadata of each dataset to each engineer.
   - When the content of a public dataset changes with no new version, mudcat keeps the old checksums and makes new versions.
-- The tasks and the invariants cover 99 of the 155 requirements. Requirements for performance and for federation have no task yet.
+- The tasks and the invariants cover 115 of the 172 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 
 - A runner, and a simulated mudcat that the runner can use before an implementation exists.
 - Random sequences of actions with the invariants as the only checks.
-- Tasks with a measured result: time, number of calls, cost. All checks are now true or false.
+- Benchmarks for registration, commits, lineage queries and resolution. Only search has a benchmark now.
+- The generator for the corpora and the queries of the search benchmark.
 - Tasks for the reserve use cases.

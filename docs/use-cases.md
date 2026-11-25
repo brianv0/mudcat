@@ -283,6 +283,10 @@ The evidence for use cases 1 to 5 is from search results and from the research n
 | Expectations on new data | | | | | | Yes | Yes | |
 | Public description and import | | Yes | | | Yes | | | Yes |
 
+## Search use cases
+
+Search is a part of each grounding use case. [search.md](search.md) lists 17 search use cases, from an exact name to a question from an agent, with the grounding use case that each one comes from. It also gives the measures and the targets for the quality and the speed of search.
+
 ## Use cases in reserve
 
 These use cases are real, but they are not grounding use cases at this time:

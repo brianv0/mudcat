@@ -142,6 +142,40 @@
   verifies: [PL-1, PL-2, RD-4, QY-4]
   reference: UC1-03
 
+- id: T1.5
+  use_case: 1
+  name: find-clips
+  goal: Find clips by a text or by an example clip, inside a metadata filter.
+  axes:
+    query: [a-text, an-example-clip]
+    filter: [no-filter, a-filter-that-1-in-10-pass, a-filter-that-1-in-1000-pass]
+    state: [all-valid, some-clips-invalidated, a-new-embedding-model-in-progress]
+  fixture: >
+    A dataset of 10 million clips, with an annotation set of embeddings. A user searches for the 10
+    nearest clips to {query}, with {filter}. State of the data: {state}.
+  oracle:
+    - if: {state: some-clips-invalidated}
+      then: {outcome: results-less-invalidated}
+    - if: {state: a-new-embedding-model-in-progress}
+      then: {outcome: answered-from-one-model-version}
+    - else: {outcome: nearest-clips}
+  checks:
+    - check: Each result passes the filter, and names the snapshot, the time span of the clip and the version of the embedding model.
+    - check: The answer has at least 9 of the 10 exact nearest clips that pass the filter.
+    - when: {filter: a-filter-that-1-in-1000-pass}
+      check: The answer has 10 results.
+    - when: {query: a-text}
+      check: mudcat made the embedding of the text with the model version of the annotation set.
+    - when: {query: an-example-clip}
+      check: mudcat used the stored embedding of the example clip, and made no new embedding.
+    - outcome: results-less-invalidated
+      check: The answer has no invalidated clip, although the vector index still holds the embeddings of those clips.
+    - outcome: answered-from-one-model-version
+      check: All results come from the embeddings of one model version, and the answer names that version.
+  invariants: [INV-3]
+  verifies: [EV-10, EV-11, UP-9, PF-17, ST-14]
+  reference: UC1-04
+
 # ---------------------------------------------------------------- use case 2
 
 - id: T2.1
@@ -244,6 +278,46 @@
       check: The error states that the snapshot expired. mudcat does not resolve to another snapshot.
   invariants: [INV-2, INV-3, INV-4]
   verifies: [UP-3, UP-9, UP-12, UP-13, UP-14, QY-8, ID-2]
+  reference: UC2-01
+
+- id: T2.4
+  use_case: 2
+  name: filter-by-metadata
+  goal: Narrow a large collection by a typed attribute.
+  axes:
+    attribute: [a-declared-number, a-declared-date, undeclared, customer-held]
+    condition: [an-equality, a-range, a-sort-order]
+    answer: [ranked, complete]
+  fixture: >
+    A collection of 100,000 computed results. Each result has the attribute that the request uses. Kind
+    of the attribute: {attribute}. The request has {condition} on the attribute, and asks for a {answer}
+    answer.
+  oracle:
+    - if: {attribute: undeclared, condition: [a-range, a-sort-order]}
+      then: {outcome: refused-with-a-hint}
+    - if: {attribute: customer-held}
+      then: {outcome: answered-through-the-gateway}
+    - else: {outcome: exact-answer}
+  checks:
+    - outcome: exact-answer
+      check: The members of the answer are the members of the complete answer from the catalog database.
+    - outcome: exact-answer
+      when: {condition: a-sort-order}
+      check: The order follows the typed value, so that 9 is before 10.
+    - outcome: exact-answer
+      when: {attribute: undeclared}
+      check: The answer marks the attribute as undeclared.
+    - outcome: refused-with-a-hint
+      check: The error states that an undeclared attribute cannot be used for a range or a sort, and tells how to declare it.
+    - outcome: answered-through-the-gateway
+      check: The results are correct, and the record of the request in the control plane has no value of the attribute.
+    - when: {answer: complete}
+      check: The answer comes from the catalog database and has no rank.
+    - outcome: [exact-answer, answered-through-the-gateway]
+      when: {answer: ranked}
+      check: The answer gives the position that the search index has processed.
+  invariants: [INV-22]
+  verifies: [ST-11, EV-21, EV-22, PF-4, PF-9]
   reference: UC2-01
 
 # ---------------------------------------------------------------- use case 3
@@ -473,6 +547,78 @@
   verifies: [AC-1, AC-7, AC-8, EV-11, UP-9]
   reference: UC4-02
 
+- id: T4.3
+  use_case: 4
+  name: search-after-a-write
+  goal: Search for a thing directly after a change to it.
+  axes:
+    change: [a-new-entity, a-new-description, a-rename, a-delete-marker, an-invalidation, removal-of-access]
+    age: [older-than-the-lag-target, one-second]
+    answer: [ranked, complete]
+  fixture: >
+    A writer commits this change: {change}. A reader sends a search that the change affects, at this
+    time after the commit: {age}. The reader asks for a {answer} answer. The search index processed the
+    change only when the time is older than the lag target.
+  oracle:
+    - if: {answer: complete}
+      then: {outcome: current-state}
+    - if: {age: older-than-the-lag-target}
+      then: {outcome: current-state}
+    - if: {change: [a-delete-marker, an-invalidation, removal-of-access]}
+      then: {outcome: removal-shown-at-once}
+    - else: {outcome: behind-and-stated}
+  checks:
+    - outcome: current-state
+      check: The answer shows the state after the change.
+    - outcome: current-state
+      when: {answer: complete}
+      check: The answer comes from the catalog database and has no rank.
+    - outcome: current-state
+      when: {change: a-rename}
+      check: A search for the new name and a search for the old name find the entity.
+    - outcome: removal-shown-at-once
+      check: The answer does not contain the entity, although the search index has not processed the change.
+    - outcome: behind-and-stated
+      check: The answer shows the state before the change, and gives a position that is lower than the position of the commit.
+    - outcome: behind-and-stated
+      check: A second request that waits for the position of the commit shows the state after the change.
+  invariants: [INV-3, INV-22]
+  verifies: [EV-4, EV-11, EV-18, EV-21, EV-22, PF-14]
+  reference: UC4-01
+
+- id: T4.4
+  use_case: 4
+  name: question-from-an-agent
+  goal: An agent finds data for a user through the MCP server.
+  axes:
+    question: [names-a-dataset, describes-a-topic, asks-what-the-user-may-use-for-training, asks-about-the-data-of-another-group]
+    metadata: [from-persons, inferred-only]
+  fixture: >
+    An agent uses the MCP server with the identity of a user. It asks a question that {question}. The
+    metadata of the datasets that match is {metadata}.
+  oracle:
+    - if: {question: asks-about-the-data-of-another-group}
+      then: {outcome: nothing-shown}
+    - if: {question: asks-what-the-user-may-use-for-training}
+      then: {outcome: answer-with-policy}
+    - else: {outcome: answer-with-entities}
+  checks:
+    - check: The audit log has the request with the identity of the user.
+    - outcome: [answer-with-entities, answer-with-policy]
+      check: Each entity in the answer has its ID and the snapshot or version, so that the agent can cite it.
+    - outcome: [answer-with-entities, answer-with-policy]
+      when: {metadata: inferred-only}
+      check: Each value in the answer names the enricher that computed it. No value looks like a statement of a person.
+    - outcome: answer-with-policy
+      check: The answer separates the datasets that permit training from those that do not, and names the source that does not permit it.
+    - outcome: answer-with-policy
+      check: mudcat computed the policy result with no read of the members of a snapshot.
+    - outcome: nothing-shown
+      check: The answer has no entity and no count. It is the same as the answer when no such data exists.
+  invariants: [INV-6, INV-9, INV-23]
+  verifies: [IN-6, EV-11, EV-19, ST-7, PF-8, AC-8]
+  reference: UC4-01
+
 # ---------------------------------------------------------------- use case 5
 
 - id: T5.1
@@ -631,6 +777,44 @@
   invariants: [INV-2, INV-5, INV-6]
   verifies: [OP-7, OP-13, OP-14, ID-12, EV-13]
   reference: UC5-05
+
+- id: T5.6
+  use_case: 5
+  name: small-readable-share
+  goal: Search in a shared installation, where the caller can read a small part.
+  axes:
+    readable_share: [all, 1-in-10, 1-in-1000, nothing]
+    matches: [fewer-than-one-page, many-pages]
+    facets: [requested, not-requested]
+  exclude:
+    - {readable_share: nothing, matches: many-pages}
+  fixture: >
+    One tenant with 1,000 groups of different sizes. The caller can read this part of the search
+    documents: {readable_share}. The caller sends a ranked search with a page size of 20. Matches that
+    the caller can read: {matches}. Facets in the request: {facets}.
+  oracle:
+    - if: {readable_share: nothing}
+      then: {outcome: empty}
+    - if: {matches: fewer-than-one-page}
+      then: {outcome: all-readable-matches}
+    - else: {outcome: full-pages}
+  checks:
+    - check: No result, count or completion shows an entity that the caller cannot read.
+    - outcome: empty
+      check: The answer has no results and no counts. It is the same as the answer to a search with no match in the catalog.
+    - outcome: all-readable-matches
+      check: The answer has each match that the caller can read, one time.
+    - outcome: full-pages
+      check: Each page has 20 results. No result is in two pages, and no readable match is absent after the last page.
+    - outcome: full-pages
+      when: {readable_share: 1-in-1000}
+      check: The first page has 20 results, although the caller can read 1 in 1,000 documents.
+    - outcome: [all-readable-matches, full-pages]
+      when: {facets: requested}
+      check: Each facet count is the number of matches that the caller can read with that value.
+  invariants: [INV-6, INV-23]
+  verifies: [EV-11, EV-19, EV-20, OP-8, PF-15]
+  reference: UC5-01
 
 # ---------------------------------------------------------------- use case 6
 
@@ -895,6 +1079,44 @@
   invariants: [INV-4, INV-9, INV-14, INV-19, INV-21]
   verifies: [ST-18, ST-20, UP-16, PL-8, OP-5]
   reference: UC6-01
+
+- id: T6.7
+  use_case: 6
+  name: name-with-changes
+  goal: Find a thing whose name the person does not remember exactly.
+  axes:
+    query: [the-exact-path, a-name-with-one-spelling-error, joined-words, parts-of-the-path-in-order, parts-of-the-path-in-another-order, the-name-before-a-rename]
+    qualifier: [no-qualifier, the-path-qualifier]
+  fixture: >
+    A catalog has the artifact raw/frames/2026/run_0412. Before a rename, its path was
+    raw/img/2026/run_0412. A user sends a ranked search with this kind of query: {query}. The request
+    has {qualifier}.
+  distractors:
+    - 999 other artifacts have the name run_0412 under other paths.
+    - One artifact has the path 2026/frames/raw/run_0412.
+  oracle:
+    - if: {query: the-exact-path}
+      then: {outcome: first-result}
+    - if: {query: parts-of-the-path-in-another-order, qualifier: the-path-qualifier}
+      then: {outcome: not-matched}
+    - else: {outcome: in-the-first-ten}
+  checks:
+    - check: The answer gives the position that the search index has processed.
+    - outcome: first-result
+      check: The artifact is the first result, above the 999 other artifacts with the name run_0412.
+    - outcome: in-the-first-ten
+      check: The artifact is in the first ten results.
+    - outcome: in-the-first-ten
+      when: {query: the-name-before-a-rename}
+      check: The result shows the present path, and states that the match is an earlier identifier.
+    - outcome: in-the-first-ten
+      when: {query: parts-of-the-path-in-order, qualifier: the-path-qualifier}
+      check: The artifact with the path 2026/frames/raw/run_0412 is not in the results.
+    - outcome: not-matched
+      check: The results have the artifact with the path 2026/frames/raw/run_0412, and not the artifact raw/frames/2026/run_0412.
+  invariants: [INV-22]
+  verifies: [EV-9, EV-16, EV-17, EV-18, EV-22, PF-18]
+  reference: UC6-02
 
 # ---------------------------------------------------------------- use case 7
 

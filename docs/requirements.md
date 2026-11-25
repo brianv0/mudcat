@@ -200,6 +200,13 @@ Identifier prefixes:
 | EV-13 | mudcat shall assign the positions of events in the order of their commits. | A number that the database assigns at insert time is not in commit order, and a consumer can then miss an event. | T |
 | EV-14 | mudcat shall record the commit of each change to mutable state, and resolve "as of" a time to the last commit at or before that time. | Wall-clock times of transactions that overlap do not give a correct order. | T |
 | EV-15 | mudcat shall publish an event for each expectation result that is a failure. | Owners and the users downstream get their alerts from the change stream. | T |
+| EV-16 | mudcat shall match a search for consecutive parts of a path only to paths that contain those parts in the same order. | A search for `x/y` must find `a/x/y/b` and not `a/y/x/b`; Goods indexes the position of each part of a path for this reason. | T |
+| EV-17 | mudcat shall let a search request name the part of the search document that a word must match. | Users search by path, by field, by owner, by tag and by the jobs that read or write the data; Goods has the same qualified search. | T |
+| EV-18 | mudcat shall find an entity by each identifier that the entity had at any time. | People and old scripts use names from before a rename. | T |
+| EV-19 | mudcat shall compute each count in a search answer from the entities that the caller can read. | A total or a facet count that includes other entities shows that they exist. | T |
+| EV-20 | mudcat shall return a page of the size of the request when that number of matches that the caller can read exists. | A search that removes results after it ranks them returns short pages to a caller who can read a small part of the catalog. | T |
+| EV-21 | mudcat shall answer a search request that asks for all matches from the catalog database. | An audit needs each match, and a derived index can be behind the catalog. | T |
+| EV-22 | mudcat shall return, with each ranked search answer, the position in the change stream that the search index has processed. | A client that wrote a change must be able to know if the answer includes that change. | T |
 
 ## Operation and deployment
 
@@ -234,6 +241,16 @@ Identifier prefixes:
 | PF-7 | mudcat shall return an error that states the limit when a lineage traversal passes its limit of depth or nodes. | A partial result that looks complete is worse than an error. | T |
 | PF-8 | mudcat shall evaluate a policy predicate on a snapshot without a read of the members of that snapshot. | Discovery queries with policy filters must stay interactive. | A |
 | PF-9 | mudcat shall add a declared attribute to the typed attribute index without a new database index. | A deployment can have thousands of metadata keys; an index for each key does not scale. | I |
+| PF-10 | mudcat shall return the correct entity as the first result for at least 99% of the exact-name queries of the search benchmark. | Search by an exact name, path or identifier must be reliable before any other search is useful. | T |
+| PF-11 | mudcat shall get an nDCG@10 for the topic queries of the search benchmark that is not lower than the nDCG@10 of BM25 on the same collection. | Ranking that combines several signals must not be worse than the standard lexical baseline. | T |
+| PF-12 | mudcat shall return the first page of a ranked search by name, field, filter or lineage in 200 ms (TBR) or less at percentile 95, over 10^7 (TBR) search documents with 20 (TBR) concurrent callers. | An answer in less than about 0.2 s seems immediate to a person, and agents make many searches for one task. | T |
+| PF-13 | mudcat shall return completions for a prefix in 50 ms (TBR) or less at percentile 95. | Completion must keep up with the speed at which a person types. | T |
+| PF-14 | mudcat shall show a committed change in ranked search answers in 30 s (TBR) or less at percentile 99. | People search for data that a pipeline registered a moment ago. | T |
+| PF-15 | mudcat shall keep the latency at percentile 95 for a caller who can read 1% of the search documents at no more than 2 (TBR) times the latency for a caller who can read all of them. | In a shared installation most callers can read a small part of the catalog, and that is the hard case for a filter on permissions. | T |
+| PF-16 | mudcat shall rebuild the search index for 10^7 search documents in 1 hour (TBR) or less while the old index serves queries. | An index that takes days to rebuild cannot change its analysis or its embedding model. | T |
+| PF-17 | mudcat shall return at least 95% (TBR) of the 10 exact nearest neighbours for a vector search with a filter that 0.1% to 100% of the items pass. | A filter that few items pass makes approximate vector search lose results. | T |
+| PF-18 | mudcat shall get a mean reciprocal rank at 10 of 0.85 (TBR) or more for the changed-name queries of the search benchmark. | People remember names with errors: a wrong letter, joined words, or a part of a path. | T |
+| PF-19 | mudcat shall return the first page of a search by meaning in 500 ms (TBR) or less at percentile 95, over 10^7 (TBR) search documents with 20 (TBR) concurrent callers. | Search by meaning needs an embedding of the query and a vector search, and still must keep the attention of a person. | T |
 
 ## Queries the system must answer
 

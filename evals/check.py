@@ -55,6 +55,62 @@ def requirement_ids():
     return set(re.findall(r"^\| ([A-Z]{2}-\d+) \|", text, flags=re.M))
 
 
+def check_benchmarks(known):
+    """Validate the benchmark specifications in evals/benchmarks/."""
+    errors = []
+    for path in sorted((EVALS / "benchmarks").glob("*.yaml")):
+        spec = yaml.safe_load(path.read_text())
+        where = path.name
+        corpora = {c["id"] for c in spec["corpora"]}
+        classes = {c["id"]: c for c in spec["query_classes"]}
+        metrics = {m["id"]: m for m in spec["metrics"]}
+        if not (ROOT / spec["document"]).exists():
+            errors.append(f"{where}: the document {spec['document']} does not exist")
+        for c in spec["query_classes"]:
+            for key in ("name", "use_cases", "answer", "queries", "truth"):
+                if not c.get(key):
+                    errors.append(f"{where} {c['id']}: no {key!r}")
+            if c.get("answer") not in ("ranked", "complete"):
+                errors.append(f"{where} {c['id']}: the answer must be ranked or complete")
+        with_quality, with_speed, used_metrics = set(), set(), set()
+        for n, t in enumerate(spec["targets"], 1):
+            tw = f"{where} target {n}"
+            metric = metrics.get(t.get("metric"))
+            if metric is None:
+                errors.append(f"{tw}: unknown metric {t.get('metric')!r}")
+                continue
+            used_metrics.add(t["metric"])
+            bounds = [b for b in ("at_least", "at_most", "equals") if b in t]
+            if len(bounds) != 1:
+                errors.append(f"{tw}: needs exactly one of at_least, at_most and equals")
+            if t.get("status") not in ("firm", "TBR"):
+                errors.append(f"{tw}: the status must be firm or TBR")
+            if t.get("requirement") not in known:
+                errors.append(f"{tw}: unknown requirement {t.get('requirement')}")
+            if "corpus" in t and t["corpus"] not in corpora:
+                errors.append(f"{tw}: unknown corpus {t['corpus']}")
+            for cid in t["classes"]:
+                if cid not in classes:
+                    errors.append(f"{tw}: unknown query class {cid}")
+                elif metric["group"] == "quality":
+                    with_quality.add(cid)
+                elif metric["group"] == "speed":
+                    with_speed.add(cid)
+        for cid in classes:
+            if cid not in with_quality:
+                errors.append(f"{where} {cid}: no target for quality")
+            if cid not in with_speed:
+                errors.append(f"{where} {cid}: no target for speed")
+        for mid in metrics.keys() - used_metrics:
+            if metrics[mid].get("reported_only"):
+                continue
+            errors.append(f"{where}: the metric {mid} has no target")
+        tbr = sum(1 for t in spec["targets"] if t.get("status") == "TBR")
+        print(f"benchmark {spec['id']}: {len(classes)} query classes, {len(metrics)} metrics, "
+              f"{len(spec['targets'])} targets, {tbr} of them TBR")
+    return errors
+
+
 def main():
     known = requirement_ids()
     errors = []
@@ -148,7 +204,11 @@ def main():
     else:
         print("\nall scenario files are valid")
     print()
-    return max(1 if errors else 0, generate.main([]))
+    benchmark_errors = check_benchmarks(known)
+    for err in benchmark_errors:
+        print(f"  {err}")
+    print()
+    return max(1 if errors or benchmark_errors else 0, generate.main([]))
 
 
 if __name__ == "__main__":

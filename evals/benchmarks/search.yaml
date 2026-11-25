@@ -1,0 +1,313 @@
+# The search benchmark. docs/search.md explains the use cases, the measures and the targets.
+# A target applies to the corpora lab and large, unless it names a corpus.
+# status: firm = the design depends on the value. TBR = an estimate that a measurement must confirm.
+# A metric with reported_only has no target. Each run reports its value.
+
+id: search
+document: docs/search.md
+corpora:
+- id: small
+  search_documents: 100000
+  purpose: Development, and quality measures.
+- id: lab
+  search_documents: 10000000
+  purpose: The targets of the lab profile, with PostgreSQL for all search.
+- id: large
+  search_documents: 100000000
+  purpose: The targets of the large profile, with an external search engine.
+- id: judged
+  search_documents: null
+  purpose: Quality for the topic queries. The collections are ACORDAR and NTCIR Data Search, if their licences permit it.
+corpus_properties:
+- Names and paths have dates, versions, shard indexes, site names and UUIDs.
+- 1,000 entities have the same last part of the name under different paths.
+- One tenant has 10,000 different attribute names. Most entities use fewer than 20 of them.
+- 5% of the entities have a description from a person. The other entities have inferred metadata only.
+- ACL roots have very different sizes, so that callers with the readable shares 1, 0.1, 0.01 and 0.001 exist.
+- 5% of the entries change each day while the measurement runs.
+conditions:
+  callers: [1, 20, 100]
+  readable_shares: [1, 0.1, 0.01, 0.001]
+  queries_for_each_class: 1000
+query_classes:
+- id: Q1
+  name: exact-name
+  use_cases: [S1]
+  answer: ranked
+  queries: The name, a complete path or an identifier of one entity.
+  truth: The entity that the query came from.
+- id: Q2
+  name: changed-name
+  use_cases: [S2, S14]
+  answer: ranked
+  queries: A name with one change. The changes are one spelling error, joined words, split words, a part of the path, and one absent word.
+  truth: The entity that the name came from.
+- id: Q3
+  name: old-name
+  use_cases: [S3]
+  answer: ranked
+  queries: An identifier that an entity had before a rename.
+  truth: That entity.
+- id: Q4
+  name: field-name
+  use_cases: [S5]
+  answer: ranked
+  queries: The name of a field, exact or with one spelling error.
+  truth: The entities whose structure has the field.
+- id: Q5
+  name: topic
+  use_cases: [S7]
+  answer: ranked
+  queries: The queries of a judged collection.
+  truth: The judgments of the collection.
+- id: Q6
+  name: other-words
+  use_cases: [S8, S15]
+  answer: ranked
+  queries: A question or a paraphrase of a description. A model writes it.
+  truth: The entity of the description. A person checks a sample of 200 queries.
+- id: Q7
+  name: filter
+  use_cases: [S9, S10, S11]
+  answer: ranked
+  queries: One to three conditions on typed attributes, tags, coverage and policy, with two facets.
+  truth: The complete answer from the catalog database.
+- id: Q8
+  name: text-with-filter
+  use_cases: [S9]
+  answer: ranked
+  queries: A query of the class Q2 together with a filter of the class Q7.
+  truth: The entity of the name, if it passes the filter.
+- id: Q9
+  name: neighbours
+  use_cases: [S4, S6]
+  answer: ranked
+  queries: A condition on lineage or on use, for example read by one job, or made by one person in the last week.
+  truth: The complete answer from the catalog database.
+- id: Q10
+  name: similar-entity
+  use_cases: [S12]
+  answer: ranked
+  queries: One entity as the query.
+  truth: The entities that share a set of fields and tags that the generator planted.
+- id: Q11
+  name: prefix
+  use_cases: [S14]
+  answer: ranked
+  queries: The first 2 to 10 characters of a name.
+  truth: The entities whose name starts with these characters, in the order of their use.
+- id: Q12
+  name: element-vector
+  use_cases: [S13]
+  answer: ranked
+  queries: One embedding, with a filter of a known selectivity.
+  truth: The exact nearest neighbours that pass the filter.
+- id: Q13
+  name: all-matches
+  use_cases: [S16]
+  answer: complete
+  queries: A request for a complete answer, with a condition on a field or a tag.
+  truth: The complete answer from the catalog database.
+metrics:
+- id: success_at_1
+  group: quality
+  definition: The part of the queries whose correct entity is the first result.
+  unit: fraction
+- id: mrr_at_10
+  group: quality
+  definition: The mean of 1 divided by the position of the correct entity. A position after 10 counts as 0.
+  unit: fraction
+- id: ndcg_at_10_ratio_to_bm25
+  group: quality
+  definition: nDCG at 10, divided by the nDCG at 10 of BM25 on the same collection.
+  unit: ratio
+- id: ndcg_at_10_ratio_to_lexical
+  group: quality
+  definition: nDCG at 10, divided by the nDCG at 10 of lexical search alone in the same engine.
+  unit: ratio
+- id: recall_at_10_against_exact
+  group: quality
+  definition: The part of the 10 exact nearest neighbours that the answer has.
+  unit: fraction
+- id: exactness
+  group: quality
+  definition: The smaller of precision and recall against the complete answer.
+  unit: fraction
+- id: facet_count_error
+  group: quality
+  definition: The largest difference between a facet count in the answer and the correct count.
+  unit: count
+- id: zero_result_rate
+  group: quality
+  definition: The part of the queries with no result although a correct result exists.
+  unit: fraction
+- id: latency_p95_ms
+  group: speed
+  definition: The time from the arrival of the request to the last byte of the first page, at percentile 95.
+  unit: ms
+- id: latency_p99_to_p95
+  group: speed
+  definition: The latency at percentile 99, divided by the latency at percentile 95.
+  unit: ratio
+- id: index_lag_p99_s
+  group: freshness
+  definition: The time from a commit to the first ranked answer that shows the change, at percentile 99.
+  unit: s
+- id: removal_lag_s
+  group: freshness
+  definition: The time from the commit of a removal to the last answer that shows the entity.
+  unit: s
+- id: leaks
+  group: permissions
+  definition: The number of results, counts or completions that show an entity that the caller cannot read.
+  unit: count
+- id: short_page_rate
+  group: permissions
+  definition: The part of the queries that return fewer results than the page size although enough readable matches exist.
+  unit: fraction
+- id: latency_ratio_small_share
+  group: permissions
+  definition: The latency at percentile 95 for a caller with the readable share 0.01, divided by the latency for a caller with the readable share 1.
+  unit: ratio
+- id: rebuild_time_h
+  group: cost
+  definition: The time to build a new index from the catalog while the old index serves queries.
+  unit: h
+- id: index_bytes_per_document
+  group: cost
+  definition: Bytes of the index for each search document, with no vectors.
+  unit: bytes
+  reported_only: true
+targets:
+- metric: success_at_1
+  classes: [Q1]
+  at_least: 0.99
+  status: firm
+  requirement: PF-10
+- metric: mrr_at_10
+  classes: [Q2, Q3, Q4, Q8]
+  at_least: 0.85
+  status: TBR
+  requirement: PF-18
+- metric: mrr_at_10
+  classes: [Q11]
+  at_least: 0.85
+  status: TBR
+  requirement: PF-18
+- metric: ndcg_at_10_ratio_to_bm25
+  classes: [Q5]
+  at_least: 1.0
+  status: firm
+  requirement: PF-11
+  corpus: judged
+- metric: ndcg_at_10_ratio_to_lexical
+  classes: [Q6]
+  at_least: 1.0
+  status: TBR
+  requirement: PF-11
+- metric: recall_at_10_against_exact
+  classes: [Q12]
+  at_least: 0.95
+  status: TBR
+  requirement: PF-17
+  filter_selectivity: [1, 0.1, 0.01, 0.001]
+- metric: recall_at_10_against_exact
+  classes: [Q10]
+  at_least: 0.95
+  status: TBR
+  requirement: PF-17
+- metric: exactness
+  classes: [Q7, Q9, Q13]
+  equals: 1
+  status: firm
+  requirement: EV-21
+- metric: facet_count_error
+  classes: [Q7, Q8]
+  equals: 0
+  status: TBR
+  requirement: EV-19
+- metric: zero_result_rate
+  classes: [Q1, Q2, Q3, Q4]
+  at_most: 0.01
+  status: TBR
+  requirement: EV-9
+- metric: latency_p95_ms
+  classes: [Q1, Q2, Q3, Q4, Q7, Q8, Q9, Q13]
+  at_most: 200
+  status: TBR
+  requirement: PF-12
+  callers: 20
+  readable_share: 1
+- metric: latency_p95_ms
+  classes: [Q5, Q6, Q10, Q12]
+  at_most: 500
+  status: TBR
+  requirement: PF-19
+  callers: 20
+  readable_share: 1
+- metric: latency_p95_ms
+  classes: [Q11]
+  at_most: 50
+  status: TBR
+  requirement: PF-13
+  callers: 20
+  readable_share: 1
+- metric: latency_p99_to_p95
+  classes: &id001 [Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12]
+  at_most: 3
+  status: TBR
+  requirement: PF-12
+  callers: 20
+  readable_share: 1
+- metric: index_lag_p99_s
+  classes: *id001
+  at_most: 30
+  status: TBR
+  requirement: PF-14
+  change_rate: 5% of the entries each day
+- metric: removal_lag_s
+  classes: *id001
+  equals: 0
+  status: firm
+  requirement: EV-11
+- metric: leaks
+  classes: [Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13]
+  equals: 0
+  status: firm
+  requirement: EV-19
+  readable_share: [1, 0.1, 0.01, 0.001]
+- metric: short_page_rate
+  classes: *id001
+  equals: 0
+  status: firm
+  requirement: EV-20
+  readable_share: [0.1, 0.01, 0.001]
+- metric: latency_ratio_small_share
+  classes: [Q1, Q2, Q5, Q7]
+  at_most: 2
+  status: TBR
+  requirement: PF-15
+  callers: 20
+- metric: rebuild_time_h
+  classes: []
+  at_most: 1
+  status: TBR
+  requirement: PF-16
+  corpus: lab
+- metric: rebuild_time_h
+  classes: []
+  at_most: 12
+  status: TBR
+  requirement: PF-16
+  corpus: large
+baselines:
+- PostgreSQL full-text search alone.
+- Lexical search alone in the selected engine.
+- BM25 on each judged collection.
+procedure:
+- Load the corpus through the registration interface, so that the index is built from the change stream.
+- Wait until the index lag is zero. Then run each query class one time.
+- Measure quality with one caller.
+- Measure speed for each number of callers and each readable share.
+- Measure freshness while a writer changes entries at the rate of the corpus properties.
+- Report each result with the corpus, the hardware, the versions of the engines and the version of the embedding model.

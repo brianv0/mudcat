@@ -471,6 +471,12 @@ Exact queries go to the catalog database, and their results are authoritative. S
 
 **Filters and permissions.** A search can include exact conditions on any indexed attribute, on tags and on lineage. The index applies the filter on permissions. Then, before mudcat returns results, the catalog checks access control and the invalidation set again for each result, because the index can be behind.
 
+**Ranked and complete answers.** A request states if it wants a ranked answer or a complete answer ([search.md](search.md)). A ranked answer comes from the index and gives the position in the change stream that the index has processed. A complete answer comes from the catalog database, through the query compiler. It has no rank, and it is never behind.
+
+**Parts of the search document.** A word in a request can name the part that it must match: name, path, field, owner, tag, a job that reads or writes the entity, or an entity upstream or downstream. The index keeps the position of each part of a path, so that a search for consecutive parts matches them only in that order. Each identifier that an entity had at any time is in its search document.
+
+**The filter on permissions has two plans.** The index holds the ACL root and the compartments of each document. For a caller who can read most of the catalog, the engine ranks first and then removes what the caller cannot read. For a caller who can read a small part, that plan returns short pages and is slow, so the engine filters first and ranks inside the readable part. mudcat selects the plan from the readable share of the caller. Counts and facets always come from the readable part.
+
 **Engines.** In the development and lab profiles, PostgreSQL does all of this: full-text search, trigram match and `pgvector`. In larger deployments, the state stream feeds an external search engine, for example OpenSearch. The same stream feeds knowledge graphs and retrieval indexes for AI agents.
 
 ### Index builders

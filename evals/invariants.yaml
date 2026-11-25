@@ -106,3 +106,13 @@
   statement: No metadata value of a discovered entry has a person as its assertion origin, unless a person wrote that value.
   observe: For each discovered entry, compare the assertion origin of each value with the log of writes by persons.
   verifies: [ST-7, ST-18]
+
+- id: INV-22
+  statement: A ranked search answer contains no entity that the complete answer to the same request does not contain.
+  observe: Send each search two times, one time for a ranked answer and one time for a complete answer, and compare the entities.
+  verifies: [EV-11, EV-21]
+
+- id: INV-23
+  statement: No count in a search answer includes an entity that the caller cannot read.
+  observe: Compare each total and each facet count with the number of matches that the caller can read.
+  verifies: [EV-19]
