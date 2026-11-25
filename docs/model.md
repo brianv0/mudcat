@@ -237,18 +237,22 @@ An **element** is an addressable part of a version. A **selector** (`mc:Selector
 
 Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's typed values. Each attribute is a field.
 
+A **metadata payload** (`mc:MetadataPayload`), or "metadata" for short, is the set of attribute values that one entity has in one namespace. mudcat writes, validates and stores each payload as one unit. An entity can have many payloads, one for each namespace: for example one that a person wrote, one from a format plugin and one from a laboratory system. Thus two writers never change the same payload.
+
 - **Attribute definitions** (`mc:AttributeDefinition`, subclass of `mc:Field`) are registered in a namespace. Each definition gives its attribute a name, datatype, unit, semantic annotation, description and optional permitted values. An AVU becomes the triple (attribute definition IRI, typed literal, unit IRI). Each definition also has a **custody level**: vendor-held, customer-encrypted or customer-held. The custody level sets where values are stored in a hosted deployment, and which queries can use them (see [hosted.md](hosted.md)). A namespace can have an owner that is the only principal that can write attributes in it.
 - **Undeclared attributes:** the catalog accepts them, stores them and can search them. But it marks them as undeclared, and it does not use them for range queries or sorts until someone declares them.
 - **Metadata schemas** (`mc:MetadataSchema`) group attribute definitions. They tell which entity classes they apply to, and which attributes are necessary.
   - mudcat generates validation shapes from them: SHACL for RDF consumers and JSON Schema for clients.
   - Schema authors can write them in LinkML.
-- **Attachment levels:**
-  - collection, as inherited defaults;
-  - artifact, which applies to all of its versions;
-  - version;
-  - replica (physical facts only);
-  - element, through annotation sets (section 4).
-- **Assertion origin.** Each value records if a person asserted it, an enricher computed it, or a model inferred it (`mc:assertedBy`), with the version of the enricher or model. Where relevant, it also records a confidence. Agent-extracted metadata is now common, and consumers need to tell it apart.
+- **Entities that can have metadata.** Each kind of entity can have metadata payloads:
+  - a collection, as inherited defaults;
+  - an artifact, which applies to all of its versions;
+  - a version;
+  - a replica (physical facts only);
+  - a dataset and a snapshot;
+  - a source, an activity, a model and a storage resource;
+  - an element, through annotation sets (section 4).
+- **Assertion origin.** Each payload records if a person asserted it, an enricher computed it, or a model inferred it (`mc:assertedBy`), with the version of the enricher or model. Where relevant, it also records a confidence. Agent-extracted metadata is now common, and consumers need to tell it apart.
 - **Reference data.** Reference tables, for example of instruments, campaigns or partners, are ordinary record datasets. Attributes link to them through `csvw:valueUrl` and foreign keys, and queries can join through them. This is a general form of Datacat's foreign metadata, the Butler's dimension records and MetaCat's external filters.
 
 ### Tags

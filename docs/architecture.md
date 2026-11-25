@@ -131,7 +131,7 @@ The catalog database is PostgreSQL with one schema per model area: namespace and
 
 - **IDs and identifiers:** UUIDv7 primary keys (IDs) for every entity, versions and snapshots included. They keep index locality for time-ordered inserts (the Butler also made this change). The embedded timestamp is not a privacy risk, because the access model controls who can see an ID. A separate table holds identifiers (paths, DOIs, names in other systems), with a unique index per scheme.
 - **Paths:** the catalog stores paths as materialised paths in `ltree`, so it evaluates path globs and ACL inheritance in SQL. This removes Datacat's Java tree walk and its temporary tables.
-- **Metadata:** the catalog stores metadata as JSONB documents. It promotes declared attributes to typed, indexed columns. GIN indexes serve equality and containment queries. Range queries and sorts need the promoted columns.
+- **Metadata:** the catalog stores each metadata payload as one JSONB document, with a key of (entity, namespace). It promotes declared attributes to typed, indexed columns. GIN indexes serve equality and containment queries. Range queries and sorts need the promoted columns.
 - **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by instance and namespace.
 - **Outbox:** every transaction appends its changes to an outbox table. A relay publishes these changes as CloudEvents.
 
