@@ -359,7 +359,7 @@ impl Session {
         let tenant = self.tenant.map(|t| t.to_string()).unwrap_or_default();
         t.execute("select set_config('mudcat.tenant', $1, true)", &[&tenant]).await?;
         let location = self.tenant.and_then(|t| self.inst.tenant(t)).map(|t| t.location).unwrap_or_else(|| "shared".into());
-        Ok(Tx { t, sess: self, commit: None, now: self.now(), location })
+        Ok(Tx { t, sess: self, commit: None, now: self.now(), location, emitted: false })
     }
 
     /// Write one entry to the audit log, in its own transaction, so that a denial stays in the
@@ -381,6 +381,7 @@ pub struct Tx<'a> {
     pub now: DateTime<Utc>,
     /// The database of the tenant when the transaction began.
     pub location: String,
+    emitted: bool,
 }
 
 impl<'a> Tx<'a> {
@@ -467,6 +468,7 @@ impl<'a> Tx<'a> {
             "data": data,
         });
         self.exec("insert into outbox (commit_id, event) values ($1, $2)", &[&commit, &ev]).await?;
+        self.emitted = true;
         Ok(rev)
     }
 
@@ -488,6 +490,7 @@ impl<'a> Tx<'a> {
             let v: Vec<Value> = chunk.to_vec();
             self.exec("insert into outbox (commit_id, event) select $1, e from unnest($2::jsonb[]) e", &[&commit, &v]).await?;
         }
+        self.emitted = true;
         Ok(())
     }
 
@@ -513,7 +516,17 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    /// Commit. A transaction that wrote events takes the commit lock of its tenant, gives its
+    /// events the next commit-order number, and holds the lock until the commit completes. Thus
+    /// the numbers are in the order in which the commits become visible (EV-13).
     pub async fn commit(self) -> Result<()> {
+        if let Some(c) = self.commit {
+            if self.emitted {
+                let tenant = self.sess.tenant_id()?;
+                self.t.execute("select pg_advisory_xact_lock(hashtextextended($1, 13))", &[&tenant.to_string()]).await?;
+                self.t.execute("update outbox set ord = (select nextval('outbox_ord_seq')) where commit_id = $1", &[&c]).await?;
+            }
+        }
         self.t.commit().await?;
         Ok(())
     }

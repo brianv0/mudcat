@@ -1,10 +1,14 @@
 //! The change stream (architecture.md, "Change stream").
 //!
-//! A commit writes its events to the outbox in the same transaction. The relay reads only the
-//! outbox rows of transactions that are older than every transaction still in progress, and
-//! gives positions at publication, in the order of the commit timestamps. Thus no earlier event
-//! can appear after a later position (EV-13), and an event exists if and only if its change
-//! committed (EV-1). The built-in transport is an HTTP feed with a position (EV-8).
+//! A commit writes its events to the outbox in the same transaction. At its end, a writing
+//! transaction takes the commit lock of its tenant and a commit-order number, and holds the lock
+//! until it is visible. The relay reads a horizon under the same lock, publishes only the rows at
+//! or below it, in commit order, and gives positions at publication. Thus no earlier event can
+//! appear after a later position (EV-13), and an event exists if and only if its change committed
+//! (EV-1). The relay does not wait for transactions in progress, nor for other tenants. (The
+//! design proposes "rows of transactions older than every transaction in progress"; transaction
+//! IDs are not in commit order, so that rule can publish a later commit before an earlier one.)
+//! The built-in transport is an HTTP feed with a position (EV-8).
 
 use crate::authz;
 use crate::error::{Error, Result};
@@ -33,28 +37,25 @@ async fn relay_batch(sess: &Session, limit: i64) -> Result<usize> {
     let tenant = sys.tenant_id()?;
     tx.exec("select pg_advisory_xact_lock(hashtextextended($1, 7))", &[&tenant.to_string()]).await?;
     tx.exec("insert into stream_state (last_position, floor) values (0, 0) on conflict do nothing", &[]).await?;
-    // The oldest transaction still in progress in this database. The snapshot lists the
-    // transactions in progress on the whole server; those of other databases cannot write this
-    // outbox, so they must not hold the stream back.
-    let threshold: String = tx
-        .q1(
-            "with snap as (select pg_current_snapshot() as s),
-                  other as (select backend_xid::text::bigint as x from pg_stat_activity
-                             where datname is distinct from current_database() and backend_xid is not null),
-                  mine as (select x from snap, pg_snapshot_xip(snap.s) as x
-                            where (x::text::bigint % 4294967296) not in (select x from other))
-             select coalesce((select min(x) from mine), (select pg_snapshot_xmax(s) from snap))::text",
-            &[],
-        )
-        .await?
-        .get(0);
+    // The horizon: under the commit lock of the tenant, no transaction is between taking its
+    // commit-order number and becoming visible, so every row at or below the highest number
+    // seen now is committed, and a later commit gets a higher number.
+    let horizon: i64 = {
+        let lock = sys.client().await?;
+        lock.execute("select pg_advisory_lock(hashtextextended($1, 13))", &[&tenant.to_string()]).await?;
+        lock.execute("select set_config('mudcat.tenant', $1, false)", &[&tenant.to_string()]).await?;
+        let h = lock.query_one("select coalesce(max(ord), 0) from outbox", &[]).await.map(|r| r.get::<_, i64>(0));
+        let _ = lock.execute("select set_config('mudcat.tenant', '', false)", &[]).await;
+        lock.execute("select pg_advisory_unlock(hashtextextended($1, 13))", &[&tenant.to_string()]).await?;
+        h?
+    };
     let rows = tx
         .q(
             "select seq, commit_id, event from outbox
-              where xid < $1::text::xid8
-              order by coalesce(pg_xact_commit_timestamp((xid::text)::xid), 'epoch'::timestamptz), xid, seq
+              where ord <= $1
+              order by ord, seq
               limit $2",
-            &[&threshold, &limit],
+            &[&horizon, &limit],
         )
         .await?;
     if rows.is_empty() {

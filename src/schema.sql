@@ -828,14 +828,21 @@ create index if not exists agent_task_queue on agent_task (tenant_id, resource_i
 
 -- ------------------------------------------------------------------ change stream
 
+-- The commit order of a writing transaction is a number that it takes at the end, while it
+-- holds the commit lock of its tenant until the commit completes; the relay publishes in this
+-- order, below a horizon that it reads under the same lock (see stream.rs).
+create sequence if not exists outbox_ord_seq;
 create table if not exists outbox (
   tenant_id  uuid not null default mc_tenant(),
   seq        bigserial,
   xid        xid8 not null default pg_current_xact_id(),
   commit_id  bigint not null,
+  ord        bigint,
   event      jsonb not null,
   primary key (tenant_id, seq)
 );
+alter table outbox add column if not exists ord bigint;
+create index if not exists outbox_ord on outbox (tenant_id, ord, seq);
 
 create table if not exists event (
   tenant_id  uuid not null default mc_tenant(),
