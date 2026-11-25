@@ -26,14 +26,14 @@ An entity is a node of a `mc:` class. "Subclass of" means `rdfs:subClassOf`.
 
 Every entity has two kinds of name:
 
-- **One ID.** The ID is a time-ordered UUID (UUIDv7). It is immutable, and the catalog publishes it as an IRI. The instance that minted the ID qualifies it. That instance is the entity's authority. This applies to every entity, versions and snapshots included.
+- **One ID.** The ID is a time-ordered UUID (UUIDv7). It is immutable, and the catalog publishes it as an IRI. The tenant that minted the ID qualifies it. That tenant is the entity's authority. This applies to every entity, versions and snapshots included.
 - **Any number of identifiers.** An **identifier** (`mc:Identifier`) is a name in a scheme: a path, a DOI, a name in another system. It is unique within its scheme and points to one ID. Most identifiers are mutable. DataCite calls these alternate identifiers.
 
 The embedded timestamp of a UUIDv7 is not a privacy risk, because the access model controls who can see an ID. Also, UUIDv7 keeps index locality for inserts in time order.
 
 **Content hashes.** The content checksum of a version and the Merkle hash of a snapshot are content hashes. They are immutable, unique and verifiable attributes, not IDs. The catalog also publishes each content hash as an identifier. These identifiers never change.
 
-**Agreement across instances.** An instance can register a replica of a version that another instance produced. In this case, it uses the ID from the instance that produced the version. Registration is idempotent on (artifact, content checksum). Thus, independent instances that hold copies of the same content agree on its identity. This is important under shared custody (see [architecture.md](architecture.md)).
+**Agreement across tenants.** A tenant can register a replica of a version that another tenant produced. In this case, it uses the ID from the tenant that produced the version. Registration is idempotent on (artifact, content checksum). Thus, independent tenants that hold copies of the same content agree on its identity. This is important under shared custody (see [architecture.md](architecture.md)).
 
 Identifier schemes include:
 
@@ -62,7 +62,7 @@ vars: {
 }
 direction: right
 
-Instance -> Collection: mints
+Tenant -> Collection: mints
 Collection -> Collection: contains
 Collection -> Artifact: contains
 Version -> Artifact: specializationOf
@@ -100,7 +100,11 @@ Evaluation -> EvaluationResult: generated
 
 These concepts come from iRODS and Datacat. The placement concepts come from Rucio.
 
-**Instance** (`mc:Instance`). An independently administered mudcat catalog. It has its own database, mints its own IDs, makes its own access and policy decisions, and can federate with other instances (an iRODS zone).
+**Tenant** (`mc:Tenant`). The unit of authority in mudcat (an iRODS zone; a tenant of the Salesforce Database). A tenant owns its data, makes its own access and policy decisions, and can federate with other tenants.
+
+- **Tenant ID.** A cryptographic random generator makes the tenant ID. It is unique in all installations, and nobody can guess it.
+- **First in every key.** The tenant ID is the first part of the key of each record that the tenant owns. Thus the records keep their keys when the tenant moves to another database.
+- **Instance.** An instance is a running deployment of mudcat: the service and its database. An instance serves one tenant or many tenants. A self-hosted instance usually has one tenant.
 
 **Collection** (`mc:Collection`). A node in the logical namespace (iRODS collection; Datacat folder). It contains artifacts and other collections. Its path is an identifier. A collection can carry inherited defaults: access-control lists, metadata and provenance (for example, "instrument X produced everything under `/raw/campaign42`").
 
@@ -286,7 +290,7 @@ Each output value records the enricher and its version as its assertion origin. 
 - **Members** (`prov:hadMember`) are versions and annotation sets.
 - **Content hash.** The snapshot has a Merkle hash (`mc:contentHash`) over the hashes of its members. The Butler's collection-snapshot proposal does the same. Snapshots share their unchanged parts. It is possible to verify a snapshot from its hash alone.
 - **Parent and summary.** Each snapshot records its parent snapshot and a summary of the change. The summary gives the operation (add, remove, replace or annotate), and the numbers and total sizes of the members added and removed, as an Iceberg snapshot summary does. It does not list the members. The changes between snapshots interface gives the lists (see [architecture.md](architecture.md)). The summary lets clients follow the history of a dataset without a comparison of member lists.
-- **Structural sharing.** A snapshot refers to its members through manifests. A new snapshot refers again to each manifest that did not change, and writes new manifests only for the changes. Iceberg shares manifests between table snapshots in the same way.
+- **Structural sharing.** A snapshot refers to its members through manifest references (see Cheap copies, below). A new snapshot refers again to each manifest that did not change, and writes new manifests only for the changes. Iceberg shares manifests between table snapshots in the same way.
 - **Status:** `published`, `deprecated` or `withdrawn`, or no status for a snapshot that is not published.
   - Only published snapshots can be cited. A run can use any snapshot, and the record of the run names that snapshot exactly.
   - mudcat can mint a DOI for a published snapshot.
@@ -311,7 +315,34 @@ mudcat does not make a snapshot for each change to a collection, for two reasons
 - **Hot spots.** A hash over a subtree changes with each write under it. Every writer would then need a conditional update of the same ref at the root, and concurrent writers would conflict all the time.
 - **Size.** A collection that receives data all the time would make one snapshot for each change. The Butler team names one large, growing collection of raw data as a failure case. For such a collection, a dataset series with one snapshot for each period (for example one each day) is better.
 
-**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element ID or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the instance-wide invalidation set instead (section 5).
+### Cheap copies
+
+Immutable data and cheap copies are design goals. A copy of a dataset, a branch ref, a sandbox or a selection shares the immutable data of its source. It does not copy that data.
+
+**Manifest reference** (`mc:ManifestReference`). A snapshot does not point to its manifests directly. It holds manifest references. Each reference names one manifest, and can restrict it:
+
+- to a range of partition values or of keys;
+- to the members that a commit added before a given position;
+- with a tenant mapping, when another tenant uses the manifest.
+
+Several references can name the same manifest. The extent references of the Salesforce Database work in the same way.
+
+What this makes cheap:
+
+- **A clone of a dataset.** The clone has new manifest references to the same manifests. Later writes to the clone make new manifests only for the changes (copy on write).
+- **A selection.** A selection that follows partition values is a set of restricted references.
+- **A copy for another tenant.** A sandbox tenant, or a tenant that receives a shared dataset, refers to the manifests of the source tenant through a tenant mapping. Reads translate the tenant ID.
+
+**Fewer foreign keys.** A reference to an immutable record, and a reference that crosses tenants, is not a foreign key in the database. A foreign key would block a cheap copy, and it cannot cross databases. mudcat keeps these references correct in other ways:
+
+- **Immutable targets.** A version, a manifest or a published snapshot never changes, so a reference to it cannot become wrong. It can only become dangling.
+- **No removal while referenced.** mudcat removes a manifest or a version only when no reference in any tenant names it (OP-15).
+- **Checks.** A background worker finds references without a target, and reports them.
+- **Erasure records.** After an erasure, the erasure record tells why the target is gone.
+
+Foreign keys stay where both rows are mutable and are in the same tenant, for example from an artifact to its collection.
+
+**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element ID or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the tenant-wide invalidation set instead (section 5).
 
 **Representation** (`mc:Representation`, analogous to `dcat:Distribution`). One physical form of a snapshot, such as native HDF5, analysis-ready Zarr, Parquet, WebDataset shards or tokenized shards.
 
@@ -370,7 +401,7 @@ A **source** (`mc:Source`, subclass of `prov:Entity`) records where data origina
 
 Access control decides who may read, change and administer catalog entries and the data they describe. mudcat models it as relationships, in the style of Google's Zanzibar. This lets either mudcat itself or an external Zanzibar-style service serve it (see the authorization section of [architecture.md](architecture.md)).
 
-- **Object types:** instance, collection, artifact, dataset, snapshot, model, storage resource, group, compartment, ticket.
+- **Object types:** tenant, collection, artifact, dataset, snapshot, model, storage resource, group, compartment, ticket.
 - **Relations** connect objects to subjects or to other objects, for example `collection#owner`, `collection#writer`, `collection#reader`, `collection#acl_root`, `dataset#collection`, `group#member`, `compartment#member`. A subject is a user, a service account, or a set of subjects such as `group:team#member`.
 - **Permissions:** mudcat computes them from relations by union, intersection and exclusion, and by a step along a relation to another object. For example, the readers, writers and owners of the collection's ACL root get read permission. If the object has a compartment, they must also be members of that compartment.
 - **Datacat's permission set** (read, insert, write, delete, admin) maps onto permissions in this schema. iRODS read, write and own map onto the same set.
@@ -480,8 +511,8 @@ mudcat keeps the terms themselves (what a licence or contract says) separate fro
 
 - **Traceability.** Each compiled grant, constraint and duty records the clause it came from.
 - **Partial compilation.** If mudcat compiled only part of the terms of a source, it marks the source as partly compiled. Resolution blocks any purpose that depends on the untranslated part until a reviewer approves it.
-- **Export.** mudcat exports terms with published snapshots (`odrl:hasPolicy` in DCAT, and in Croissant and RO-Crate exports). The federation feed between instances also carries them.
-- **Negotiation.** An instance can publish an ODRL offer and record the accepted agreement before the instances exchange data.
+- **Export.** mudcat exports terms with published snapshots (`odrl:hasPolicy` in DCAT, and in Croissant and RO-Crate exports). The federation feed between tenants also carries them.
+- **Negotiation.** A tenant can publish an ODRL offer and record the accepted agreement before the tenants exchange data.
 
 ### Removal, invalidation and holds
 
@@ -500,7 +531,7 @@ mudcat keeps the terms themselves (what a licence or contract says) separate fro
 
 The rules:
 
-- **Invalidations apply to all snapshots.** An invalidation does not create a new snapshot of each dataset that contains the content. mudcat keeps one instance-wide **invalidation set**. The resolver applies it to every snapshot, old or new. Thus a takedown takes effect at once, also for snapshots that a run already used.
+- **Invalidations apply to all snapshots.** An invalidation does not create a new snapshot of each dataset that contains the content. mudcat keeps one tenant-wide **invalidation set**. The resolver applies it to every snapshot, old or new. Thus a takedown takes effect at once, also for snapshots that a run already used.
 - **Exclusion lists in a dataset are forward.** An exclusion list that is an annotation set of one dataset (for example the opt-outs of one source) is a forward operation. It affects only the snapshots that contain it. This is the equivalent of an Iceberg deletion vector.
 - **Snapshots keep their hashes.** A snapshot that contains invalidated, purged or erased content keeps its Merkle hash. The hash still proves what the snapshot contained. mudcat can make a redacted successor snapshot, for continued use of the rest of the content.
 - **Erasure is for data that must not stay in the catalog,** for example personal data in metadata. The erasure record does not contain the erased metadata. Sometimes the content hash can itself identify a person. Then mudcat also removes the hash. As a result, nobody can verify that member of the snapshots that contained it.
@@ -618,7 +649,7 @@ External movers do the transfers. mudcat records the requests and their outcomes
 
 | mudcat | Standard terms | Datacat | iRODS | Rucio | Rubin Butler |
 |---|---|---|---|---|---|
-| Instance | — | One Datacat server | Zone | VO (partly) | Repository |
+| Tenant | — | One Datacat server | Zone | VO (partly) | Repository |
 | Collection | — | Folder | Collection | Container DID (partly) | — |
 | Artifact | `prov:Entity` | Dataset | Data object | File DID | Dataset (by type and data ID) |
 | Version | `prov:specializationOf`, `dcat:version` | Dataset version | — | — | Dataset in a RUN collection |

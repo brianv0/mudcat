@@ -29,7 +29,7 @@ users: "Users and agents\nSDK · CLI · web UI · notebooks · MCP clients"
 vendor: Vendor control plane (one region) {
   front: "API gateway\ncustomer IdP through OIDC · SCIM groups"
   services: "Catalog services\ncatalog API · query · resolver · policy · authorization port · ingest writer"
-  tenants: "Tenant catalogs\none PostgreSQL database for each instance" {
+  tenants: "Tenant catalogs\nshared tables · tenant ID first in each key" {
     shape: cylinder
   }
   workers: "Background workers\nindexes · lineage · maintenance · placement · deletion"
@@ -67,7 +67,7 @@ vendor.services -> customer.broker: split queries · policy checks (gateway conn
 
 ## Credentials for storage
 
-The resolver must give clients credentials, but the customer must keep control of their storage. There are three modes, and each instance selects one:
+The resolver must give clients credentials, but the customer must keep control of their storage. There are three modes, and each tenant selects one:
 
 | Mode | How the resolver gets credentials | Vendor access to bytes |
 |---|---|---|
@@ -79,26 +79,34 @@ The **credential broker** mode is the "no data access" mode. Regulated customers
 
 ## Tenancy
 
-A **tenant** is a customer organisation. A tenant has one or more instances. An instance is a logical catalog, not a deployment: one control plane serves many instances. The instance is the unit of isolation, because the model already uses instances as the unit of authority and federation.
+A **tenant** is the unit that a customer gets: one catalog with its own data, its own access and policy decisions, and its own tenant ID (see [model.md](model.md)). A customer can have more than one tenant, for example one for each region, or a sandbox copy. One mudcat instance (a running deployment) serves many tenants.
 
 | Tier | Isolation | For |
 |---|---|---|
-| Shared | One PostgreSQL database for each instance, on shared database clusters; shared stateless services | Small teams, trials |
-| Dedicated | A dedicated database cluster and dedicated workers for the tenant, in the vendor's account | Large or regulated tenants |
+| Shared | Many tenants in the same tables of one database. The tenant ID is the first part of every key, and row-level security separates the tenants | Small teams, trials |
+| Dedicated | A dedicated database and dedicated workers for the tenant, in the vendor's account | Large or regulated tenants |
 | Customer cloud (BYOC) | The vendor operates the control plane inside the customer's own cloud account | Customers who must keep metadata in their own account |
-| Self-hosted | The customer runs the open-source release | Facilities with their own operations staff |
+| Self-hosted | The customer runs the open-source release, usually with one tenant | Facilities with their own operations staff |
 
-The same code runs in all four tiers. Only the deployment differs.
+The same code and the same database schema run in all four tiers. Only the deployment differs.
 
-A database for each instance has these advantages over rows of several tenants in one database:
+**A move between tiers does not change keys.** A tenant ID is unique everywhere, so the records of a tenant keep their keys when they move to another database. The move copies the rows of the tenant, in a short period without writes. The Salesforce Database uses the same key design for the same reason. Its moves are operations on metadata only, because its storage is immutable. PostgreSQL must copy the rows.
 
-- **Recovery:** backup, point-in-time recovery and restore apply to one tenant.
-- **Migrations:** schema migrations can be applied to one tenant at a time, with canaries.
-- **Deletion:** when a tenant leaves, its database is deleted, and nothing remains in shared tables.
-- **Keys:** customer-managed encryption keys apply to one database.
-- **Limits:** a tenant's rows cannot appear in another tenant's queries, even if the application has an error.
+A tenant moves from the shared tier to a dedicated database when it needs one of these:
 
-Very small instances can share a database, with one schema for each instance. Larger tenants move to their own database without a change to the application.
+- **Recovery:** backup, point-in-time recovery and restore for that tenant alone.
+- **Keys:** a customer-managed encryption key for the whole database.
+- **Capacity:** more data or load than the shared database can give to one tenant.
+
+### Endpoints
+
+Each tenant has its own endpoint, for example `<tenant>.<region>.mudcat.example`. All interfaces of the tenant are below this endpoint: the REST interface, the Iceberg REST catalog, the change stream and the MCP server.
+
+- **Clients do not know about tenants.** An SDK, a Ray job or a site agent has one catalog URL. It sends no tenant parameter.
+- **The server finds the tenant in one layer.** It reads the tenant from the hostname, and checks that the audience of the token is the same tenant. It does not trust a header that a gateway adds.
+- **The endpoint is stable.** A move to another database changes the routing, not the URL.
+- **The endpoint is not the identity.** The IRI of an entity does not contain the hostname of the endpoint, so a custom domain or a move does not change IRIs.
+- **Names in hostnames are public.** Hostnames appear in DNS and in certificate logs. A tenant can use an opaque name.
 
 ## Metadata that the customer controls
 
@@ -117,7 +125,7 @@ Each attribute definition has a **custody level**. The custody level sets where 
 
 | Custody level | Where values are | What the control plane can do |
 |---|---|---|
-| **Vendor-held** | The instance's database in the control plane | Everything: queries, sorts, facets, policy evaluation |
+| **Vendor-held** | The catalog database in the control plane | Everything: queries, sorts, facets, policy evaluation |
 | **Customer-encrypted** | The control plane stores ciphertext. Only the customer holds the key | Equality queries through a **blind index**: a keyed hash of each value, which the customer gateway computes. No range queries, sorts or full-text search. The control plane cannot read the values |
 | **Customer-held** | A metadata store in the customer's data plane, behind the customer gateway | Nothing directly. The control plane stores only the fact that the attribute exists for an entity |
 
@@ -148,19 +156,19 @@ The gateway runs next to the customer's metadata store, and holds the customer's
 
 ### Federation as an alternative
 
-A customer that wants to hold much of its metadata can run a small self-hosted instance for it, and federate it with its hosted instances. This uses the normal federation rules: each instance makes the decisions about the data that it owns. Custody levels are better when only a few attributes are sensitive. A federated instance is better when whole datasets are sensitive.
+A customer that wants to hold much of its metadata can run a small self-hosted tenant for it, and federate it with its hosted tenants. This uses the normal federation rules: each tenant makes the decisions about the data that it owns. Custody levels are better when only a few attributes are sensitive. A federated tenant is better when whole datasets are sensitive.
 
 ## Regions and residency
 
-- **One region for each instance.** Each instance is pinned to one region of the control plane. Metadata can be sensitive (file names, sources, consent status), so metadata residency matters as much as data residency.
-- **Regional control planes.** The vendor runs one control plane in each region it offers. A tenant with instances in several regions links them through the normal federation feed, as independent instances.
-- **Global data.** Only account data (tenants, billing, the list of instances and their regions) is global.
+- **One region for each tenant.** Each tenant is pinned to one region of the control plane. Metadata can be sensitive (file names, sources, consent status), so metadata residency matters as much as data residency.
+- **Regional control planes.** The vendor runs one control plane in each region it offers. A customer with tenants in several regions links them through the normal federation feed, as independent tenants.
+- **Global data.** Only account data (tenants, billing, the list of tenants and their regions) is global.
 
 ## Derived state
 
 - **Manifests.** By default, the control plane stores manifests in a per-tenant store, encrypted with the tenant's key. A tenant can instead give a bucket in its own account. Manifests list file names and element metadata, so some tenants will want them in their own account.
 - **Indexes.** Search, vector and identity indexes are per tenant: separate indexes on shared clusters for the shared tier, dedicated clusters above that.
-- **Authorization.** The built-in adapter keeps relationships in the instance's database. A tenant can instead connect its own SpiceDB or OpenFGA service, self-hosted or managed, through the authorization port.
+- **Authorization.** The built-in adapter keeps relationships in the catalog database, with the tenant ID first in each key. A tenant can instead connect its own SpiceDB or OpenFGA service, self-hosted or managed, through the authorization port.
 
 ## Fairness and limits
 
@@ -170,10 +178,10 @@ A customer that wants to hold much of its metadata can run a small self-hosted i
 
 ## Operations
 
-- **Upgrades:** online schema migrations, applied tenant by tenant, with canary tenants first.
-- **Backups:** point-in-time recovery for each instance database. Restore tests run on a schedule.
+- **Upgrades:** online schema migrations, applied one database at a time, with a canary database first.
+- **Backups:** point-in-time recovery for each database. To restore one tenant of the shared tier, the vendor restores the database to a separate place and copies the rows of that tenant. Restore tests run on a schedule.
 - **Audit:** each tenant can stream its audit log to its own security tools.
-- **Exit:** a tenant can export a full instance at any time. The export contains a database dump in the format of the open-source release, the manifests and a JSON-LD export. A tenant can thus move to self-hosting without loss.
+- **Exit:** a customer can export a full tenant at any time. The export contains the rows of the tenant in the format of the open-source release, the manifests and a JSON-LD export. The keys do not change, so the customer can move to self-hosting without loss.
 
 ## What to charge for
 
@@ -189,5 +197,6 @@ The vendor does not hold the data, so the price should not depend on data volume
 
 - **Trust in credential vending.** The delegated-role mode gives the vendor a path to customer bytes. The credential broker removes this path, but adds a component that the customer must run.
 - **Latency for HPC.** HPC jobs that resolve names at start-up depend on the control plane's availability. Resolved manifests and credentials that jobs can cache for their lifetime reduce this dependency.
-- **Enclaves.** Some enclaves permit no outbound connection. Their agents need an approved relay, or the enclave runs a self-hosted instance that federates with the hosted instances.
-- **Many databases.** One database for each instance means many databases to operate. Shared clusters and automation keep this practical, but it needs investment early.
+- **Enclaves.** Some enclaves permit no outbound connection. Their agents need an approved relay, or the enclave runs a self-hosted tenant that federates with the hosted tenants.
+- **Shared tables.** An error in row-level security, or a cache key without a tenant, could show the data of one tenant to another. The isolation test suite (see [architecture.md](architecture.md)) is the defence, and it must run on every release.
+- **Restore of one tenant.** In the shared tier, a restore of one tenant is a copy of rows from a restored database, not a simple database restore.

@@ -41,16 +41,19 @@ Identifier prefixes:
 
 | ID | Requirement | Rationale | Ver. |
 |---|---|---|---|
-| ID-1 | mudcat shall give each entity an immutable ID that is a UUIDv7 qualified by the instance that minted it. | UUIDv7 keeps index locality for inserts in time order; the Butler changed to UUIDv7 for this reason. The access model controls who can see an ID, so the embedded timestamp is not a privacy risk. | I |
+| ID-1 | mudcat shall give each entity an immutable ID that is a UUIDv7 qualified by the tenant that minted it. | UUIDv7 keeps index locality for inserts in time order; the Butler changed to UUIDv7 for this reason. The access model controls who can see an ID, so the embedded timestamp is not a privacy risk. | I |
 | ID-2 | mudcat shall resolve each identifier to exactly one ID within the scheme of the identifier. | Paths and names in other systems change. Lineage and policy must not break when they change. | T |
-| ID-3 | mudcat shall reject a change to the content, the members or the metadata of a published version, a published snapshot, a resolution or a provenance record. | Immutable entities make reproduction, verification and replication across instances possible. | T |
+| ID-3 | mudcat shall reject a change to the content, the members or the metadata of a published version, a published snapshot, a resolution or a provenance record. | Immutable entities make reproduction, verification and replication across tenants possible. | T |
 | ID-4 | mudcat shall record a content checksum for each version, with the checksum algorithm. | Storage resources compute different algorithms; integrity checks need the algorithm with the value. | T |
-| ID-5 | mudcat shall compute a Merkle hash for each published snapshot from the hashes of its members. | A party that holds the hashes can verify a snapshot without trust in the database of another instance. | T |
-| ID-6 | When an instance registers a replica of a version that another instance produced, mudcat shall use the ID that the producing instance minted. | Instances under shared custody must agree on identity without coordination at write time. | T |
+| ID-5 | mudcat shall compute a Merkle hash for each published snapshot from the hashes of its members. | A party that holds the hashes can verify a snapshot without trust in the database of another tenant. | T |
+| ID-6 | When a tenant registers a replica of a version that another tenant produced, mudcat shall use the ID that the producing tenant minted. | Tenants under shared custody must agree on identity without coordination at write time. | T |
 | ID-7 | mudcat shall move a branch only if the branch points to the snapshot that the request states. | Concurrent writers must not lose each other's changes; Iceberg commits use the same optimistic concurrency. | T |
 | ID-8 | mudcat shall keep each published snapshot until a person withdraws it. | Citations refer to published snapshots. | T |
 | ID-9 | mudcat shall expire a snapshot that is not published only if no ref and no resolution refers to it. | Snapshots that no process uses must not use storage for ever, but expiry must not break a reference. | T |
 | ID-10 | mudcat shall make, on request, a snapshot of the versions that a collection subtree held at a given time. | Users who work by folder need citable, verifiable states of a folder; the Butler proposes the same operation. | T |
+| ID-11 | mudcat shall give each tenant an ID that a cryptographic random generator made, with at least 122 random bits. | Tenant IDs must be unique in all installations without a central registry, and must not be guessable. | I |
+| ID-12 | mudcat shall put the tenant ID first in the key of each record that a tenant owns. | Records keep their keys when a tenant moves, and the data of a tenant is together in each index; the Salesforce Database has the same design. | I |
+| ID-13 | mudcat shall make a copy of a dataset without a copy of its manifests or its data. | Cheap copies are a design goal: clones, branches, sandboxes and selections share immutable data by reference. | T |
 
 ## Structure and metadata
 
@@ -109,7 +112,7 @@ Identifier prefixes:
 | UP-4 | mudcat shall propagate the duties of a source to each entity derived from it, models included. | Licences and consent terms apply to derivatives; some data providers treat model weights as controlled derivatives. | T |
 | UP-5 | mudcat shall keep the original terms document of each source and link each compiled grant, constraint and duty to the clause it came from. | Audits and disputes must trace a decision to the contract. | I |
 | UP-6 | mudcat shall block a resolution for a purpose that depends on terms that the terms compiler could not translate, until a reviewer approves it. | Partial compilation must not grant more than the contract gives. | T |
-| UP-7 | When mudcat receives a takedown, mudcat shall find each occurrence of the affected content in the instance and record a deletion receipt for each replica that it deletes. | A deletion must be complete and provable. | T |
+| UP-7 | When mudcat receives a takedown, mudcat shall find each occurrence of the affected content in the tenant and record a deletion receipt for each replica that it deletes. | A deletion must be complete and provable. | T |
 | UP-8 | mudcat shall not purge or erase data that a legal hold covers. | Preservation orders override deletion. | T |
 | UP-9 | mudcat shall exclude invalidated content from each resolution, for snapshots made before and after the invalidation. | A takedown must take effect at once, also for training sets that exist. | T |
 | UP-10 | mudcat shall keep the Merkle hash of a snapshot after it purges content of that snapshot. | The hash proves what the snapshot contained. | T |
@@ -127,7 +130,7 @@ Identifier prefixes:
 | RD-2 | mudcat shall resolve the inputs of a job to a manifest of elements, selectors and replica URLs in one request. | Batch jobs must not query the catalog once per file. | T |
 | RD-3 | mudcat shall issue credentials scoped to a prefix only if the prefix is completely inside one ACL root that the caller can read. | Credentials scoped to a prefix give access to everything under that prefix. | T |
 | RD-4 | mudcat shall select the replica for a read from the verified replicas that the jurisdiction and egress rules of their storage resources permit. | Data must not leave a place where law or contract keeps it. | T |
-| RD-5 | When an instance uses the credential-broker mode, mudcat shall issue storage credentials only through a broker that runs in the customer's environment. | Regulated customers of a hosted service must keep the vendor without access to their bytes. | T |
+| RD-5 | When a tenant uses the credential-broker mode, mudcat shall issue storage credentials only through a broker that runs in the customer's environment. | Regulated customers of a hosted service must keep the vendor without access to their bytes. | T |
 | RD-6 | mudcat shall skip a manifest or a file during planning only if its statistics prove that no element inside it matches the request. | Statistics must make plans faster without a change to their results. | T |
 | RD-7 | mudcat shall return, with each task of a resolution plan, the expected bytes, the expected number of elements and the replica location. | Compute engines need these values to size and place their tasks. | T |
 | RD-8 | mudcat shall provide read and write connectors for Ray Data that pass the run token of the job. | Lineage must come from the jobs that use the data, without extra code in each job. | D |
@@ -138,9 +141,9 @@ Identifier prefixes:
 |---|---|---|---|
 | PL-1 | mudcat shall record, for each representation and storage resource, if the representation is complete and verified on that storage resource. | The Butler team found no per-site completeness check in their multi-site system. | T |
 | PL-2 | mudcat shall create transfer requests that satisfy the replication rules and send them to an external mover. | Movers such as FTS3 and Globus already do transfers well. | D |
-| PL-3 | mudcat shall exchange only published, immutable descriptions with other instances. | Instances must not share mutable state. | I |
-| PL-4 | mudcat shall make access decisions only for data on storage resources that its own instance owns. | Under federation the instance that owns the data decides. | T |
-| PL-5 | mudcat shall sign each event that it sends on the federation feed. | Receiving instances must verify where an event came from. | T |
+| PL-3 | mudcat shall exchange only published, immutable descriptions with other tenants. | Tenants must not share mutable state. | I |
+| PL-4 | mudcat shall make access decisions only for data on storage resources that its own tenant owns. | Under federation the tenant that owns the data decides. | T |
+| PL-5 | mudcat shall sign each event that it sends on the federation feed. | Receiving tenants must verify where an event came from. | T |
 | PL-6 | mudcat shall report each file on a storage resource that no replica record describes, and each replica record whose file is missing. | Dark data and lost replicas make the catalog wrong; Rucio runs the same consistency checks. | T |
 
 ## Interfaces and standards
@@ -171,6 +174,8 @@ Identifier prefixes:
 | EV-10 | mudcat shall rank search results with lexical match and vector similarity combined. | Each kind of match finds results that the other does not. | T |
 | EV-11 | mudcat shall check current access control and the invalidation set for each search result before it returns the result. | The search index can be behind the catalog. | T |
 | EV-12 | mudcat shall return, in pages, the members that one snapshot added and removed in comparison with another snapshot of the same dataset. | Consumers of snapshot events need the complete list of changes, and one event cannot hold millions of members. | T |
+| EV-13 | mudcat shall assign the positions of events in the order of their commits. | A number that the database assigns at insert time is not in commit order, and a consumer can then miss an event. | T |
+| EV-14 | mudcat shall record the commit of each change to mutable state, and resolve "as of" a time to the last commit at or before that time. | Wall-clock times of transactions that overlap do not give a correct order. | T |
 
 ## Operation and deployment
 
@@ -183,17 +188,21 @@ Identifier prefixes:
 | OP-5 | mudcat shall accept a repeated registration of the same artifact and checksum without a duplicate entry. | Batch jobs retry. | T |
 | OP-6 | mudcat shall seal unsealed member rows into manifest files without a change to the members or the Merkle hash of any snapshot. | Maintenance must not change what a snapshot contains. | T |
 | OP-7 | mudcat shall run the same release as a hosted service and as a self-hosted installation. | Customers must be able to move between hosted and self-hosted operation. | I |
-| OP-8 | mudcat shall keep the catalog of each instance in a database or schema that holds no other tenant's data. | Tenant isolation, recovery and deletion are simpler and safer per instance. | I |
+| OP-8 | mudcat shall return to a request only the records of the tenant of that request, unless an explicit grant between tenants applies. | Many tenants share the tables of one database. | T |
+| OP-12 | mudcat shall resolve the tenant of a request in one layer, from the hostname of the request and the audience of its token. | Code below that layer must not need to know about tenants, and a header from a gateway is not proof. | I |
+| OP-13 | mudcat shall use the same database schema for one tenant and for many tenants. | A self-hosted installation must be able to add a tenant, or move into a hosted service, without a migration. | I |
+| OP-14 | mudcat shall move a tenant to another database without a change to the keys of its records. | Tenants move between the shared tier and dedicated databases. | D |
+| OP-15 | mudcat shall not remove a manifest or a version while a reference in any tenant names it. | Copies share immutable data by reference, and the database has no foreign key for these references. | T |
 | OP-9 | mudcat shall connect site agents to the control plane only through connections that the agents open. | Customers must not need to open inbound ports. | D |
-| OP-10 | mudcat shall export a complete instance in a form that the self-hosted release can import. | Customers must be able to leave the hosted service without loss. | T |
-| OP-11 | mudcat shall keep the metadata of each instance in the region that the instance selects. | Metadata can be sensitive and subject to residency rules. | I |
+| OP-10 | mudcat shall export a complete tenant in a form that the self-hosted release can import. | Customers must be able to leave the hosted service without loss. | T |
+| OP-11 | mudcat shall keep the metadata of each tenant in the region that the tenant selects. | Metadata can be sensitive and subject to residency rules. | I |
 
 ## Performance and scale
 
 | ID | Requirement | Rationale | Ver. |
 |---|---|---|---|
-| PF-1 | mudcat shall hold at least 10^9 (TBR) versions and replicas in one instance. | Frontier labs and large science collaborations reach this scale; Postgres-first catalogs report 10^8. | A |
-| PF-2 | mudcat shall index at least 10^11 (TBR) elements in one instance through manifests. | Web corpora and packed multimodal datasets reach this scale. | A |
+| PF-1 | mudcat shall hold at least 10^9 (TBR) versions and replicas in one tenant. | Frontier labs and large science collaborations reach this scale; Postgres-first catalogs report 10^8. | A |
+| PF-2 | mudcat shall index at least 10^11 (TBR) elements in one tenant through manifests. | Web corpora and packed multimodal datasets reach this scale. | A |
 | PF-3 | mudcat shall register at least TBD versions per minute through bulk registration. | The Butler measured registration delays of up to ten minutes with hundreds of concurrent writers. | T |
 | PF-4 | mudcat shall return the first page of a metadata query over 10^8 (TBR) versions in less than TBD seconds. | Interactive search must stay usable at science scale. | T |
 | PF-5 | mudcat shall commit a change to a dataset in less than TBD milliseconds, with TBD concurrent writers on the same branch. | Iceberg commits take seconds because they write metadata files to object storage; mudcat commits only change database rows. | T |
@@ -212,7 +221,7 @@ Each of these queries shall be possible as one request to mudcat. The verificati
 | QY-2 | mudcat shall produce the training-content summary for a given model. |
 | QY-3 | mudcat shall report if an evaluation dataset has elements that are related, under a given similarity criterion, to the elements of the training inputs of a given model. |
 | QY-4 | mudcat shall list the storage resources on which a given snapshot or representation is complete and verified. |
-| QY-5 | mudcat shall list each occurrence of given content, in each dataset, representation and storage resource of the instance. |
+| QY-5 | mudcat shall list each occurrence of given content, in each dataset, representation and storage resource of the tenant. |
 | QY-6 | mudcat shall list the runs, models and caches that use data whose licence expires before a given date. |
 | QY-7 | mudcat shall list the candidates that a given model generated, the experiments that used them, and the models that used the results of those experiments in training. |
 | QY-8 | mudcat shall resolve again the training inputs of a given model and report the elements that usage policy now excludes. |
