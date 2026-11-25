@@ -170,6 +170,18 @@ async fn a_move_waits_for_open_writes_and_refuses_new_ones_at_once() {
         let (mover, tenant, target) = (w.mover.clone(), w.tenant.id, w.target.clone());
         let mv = tokio::spawn(async move { mudcat::tenants::move_tenant(&mover, tenant, &target).await });
 
+        // Wait until the mover has claimed the tenant (it makes the target database first, which
+        // can take a while); a write before that is an ordinary write.
+        let shared = w.mover.shared.get().await.map_err(|e| e.to_string())?;
+        let claimed = std::time::Instant::now();
+        loop {
+            let status: String = shared.query_one("select status from tenant where id = $1", &[&w.tenant.id]).await.map_err(|e| e.to_string())?.get(0);
+            if status == "moving" {
+                break;
+            }
+            expect!(claimed.elapsed() < Duration::from_secs(30), "the mover did not claim the tenant");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         // The mover must not start to copy before that transaction ends.
         let early = timeout(Duration::from_millis(700), pause.reached()).await;
         expect!(early.is_err(), "the copy started while a write transaction that had passed the fence was open: its write is lost");
