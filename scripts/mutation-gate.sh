@@ -35,9 +35,11 @@ dburl() { echo "${SERVER%/*}/$1"; }
 dropdb() {
   command -v psql >/dev/null || return 0
   local i
-  for i in 1 2 3; do
+  # a drop with force fails while an autovacuum worker is in the database (the role of mudcat
+  # cannot end that process), so it is tried for up to half a minute
+  for i in 1 2 3 4 5 6 7 8 9 10; do
     psql "$(dburl postgres)" -qc "drop database if exists \"$1\" with (force)" >>"$LOG/drop.log" 2>&1 && return 0
-    sleep 2
+    sleep 3
   done
   echo "could not drop the database $1 (see $LOG/drop.log)" >&2
   return 0
