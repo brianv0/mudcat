@@ -3,3 +3,4 @@ __pycache__/
 /target/
 evals/results/partial.json
 .claude/
+evals/results/latest-quick.json

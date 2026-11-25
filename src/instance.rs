@@ -173,10 +173,18 @@ pub fn db_url(base: &str, db: &str) -> String {
 impl Instance {
     /// Connect to the database at `url`, make it if it does not exist, and apply the schema.
     pub async fn open(url: &str, data_dir: impl Into<PathBuf>) -> Result<Arc<Instance>> {
+        Self::open_with(url, data_dir, true).await
+    }
+
+    /// Like [`Instance::open`]; with `apply = false` it does not apply the schema (for a process
+    /// that opens many instances on a database whose schema is already applied).
+    pub async fn open_with(url: &str, data_dir: impl Into<PathBuf>, apply: bool) -> Result<Arc<Instance>> {
         let data_dir = data_dir.into();
-        ensure_database(url).await?;
         let shared = make_pool(url, 120)?;
-        apply_schema(&shared).await?;
+        if apply {
+            ensure_database(url).await?;
+            apply_schema(&shared).await?;
+        }
         let secret = load_secret(&data_dir)?;
         let inst = Instance {
             base_url: url.to_string(),

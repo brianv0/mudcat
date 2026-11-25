@@ -134,7 +134,8 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
             if polls % 3 == 0 {
                 stored = consumer.position; // the consumer stores its position now and then
             }
-            if consumer_state == "stops-and-restarts" && polls == 6 && !restart_seen {
+            // (if the writers finish before the sixth poll, it stops after its last poll)
+            if consumer_state == "stops-and-restarts" && (polls == 6 || finished) && !restart_seen {
                 // it stops, and starts again from its stored position: it gets some events a second time
                 restart_seen = true;
                 consumer.position = stored.saturating_sub(5).max(0);

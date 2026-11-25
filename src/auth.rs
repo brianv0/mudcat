@@ -121,3 +121,40 @@ pub async fn sign_in_pipeline(inst: &Arc<Instance>, tenant: Uuid, issuer_secret:
     tx.commit().await?;
     Ok((issue(inst, tenant, &p, chrono::Duration::hours(1)), p))
 }
+
+/// The device sign-in flow of an outside provider (simulated): mudcat asks the provider for a
+/// device code, the person approves the user code at the provider, and mudcat then polls with the
+/// device code. It gets a provider token, exchanges it at once for a mudcat token, and keeps
+/// neither the device code nor the provider token. Returns (device code, user code).
+pub fn start_device_login(inst: &Instance, provider: &str) -> (String, String) {
+    let device = hex::encode(rand::random::<[u8; 16]>());
+    let user = hex::encode(rand::random::<[u8; 4]>()).to_uppercase();
+    inst.idp.tokens.write().insert(format!("device:{provider}:{user}"), format!("pending:{device}"));
+    (device, user)
+}
+
+/// The person approves the user code at the provider, as the external user `external`.
+pub fn approve_device_login(inst: &Instance, provider: &str, user_code: &str, external: &str) -> Result<()> {
+    let mut t = inst.idp.tokens.write();
+    let pending = t.remove(&format!("device:{provider}:{user_code}")).ok_or_else(|| Error::invalid("unknown user code"))?;
+    let device = pending.trim_start_matches("pending:").to_string();
+    let provider_token = format!("{provider}-device-{}", hex::encode(rand::random::<[u8; 12]>()));
+    t.insert(provider_token.clone(), external.to_string());
+    t.insert(format!("device-done:{provider}:{device}"), provider_token);
+    Ok(())
+}
+
+/// mudcat polls with the device code. When the person has approved, it exchanges the provider
+/// token for a mudcat token for the tenant, and forgets the provider token.
+pub async fn poll_device_login(inst: &Arc<Instance>, tenant: Uuid, provider: &str, device_code: &str) -> Result<(String, Principal)> {
+    let provider_token = inst
+        .idp
+        .tokens
+        .write()
+        .remove(&format!("device-done:{provider}:{device_code}"))
+        .ok_or_else(|| Error::Unauthenticated("the device login is not approved yet".into()))?;
+    let out = sign_in_provider(inst, tenant, provider, &provider_token).await;
+    // the provider token is used once and not kept
+    inst.idp.tokens.write().remove(&provider_token);
+    out
+}
