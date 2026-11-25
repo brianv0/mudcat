@@ -479,7 +479,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(t) = a.queries_on {
         let s = b.inst.session(t, Principal::user("admin"));
         queries_run(&mut b, &s).await?;
-        std::fs::write(&a.out, serde_json::to_string_pretty(&json!({"results": b.results}))?)?;
+        std::fs::write(&a.out, serde_json::to_string_pretty(&json!({"stamp": mudcat::evals::stamp(&format!("bench versions={}", a.versions)), "results": b.results}))?)?;
         return Ok(());
     }
     if run("registration") || run("queries") {
@@ -507,7 +507,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(dir) = std::path::Path::new(&a.out).parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(&a.out, serde_json::to_string_pretty(&json!({"host": host, "results": b.results}))?)?;
+    std::fs::write(&a.out, serde_json::to_string_pretty(&json!({"stamp": mudcat::evals::stamp(&format!("bench versions={}", a.versions)), "host": host, "results": b.results}))?)?;
     println!("wrote {}", a.out);
     Ok(())
 }

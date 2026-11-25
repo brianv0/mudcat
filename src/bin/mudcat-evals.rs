@@ -10,8 +10,13 @@ use std::sync::Arc;
 
 #[derive(Parser)]
 struct Args {
-    #[arg(long, env = "MUDCAT_DB", default_value = "postgres://mudcat:mudcat@localhost:54329/mudcat_evals")]
-    db: String,
+    /// The database to use; it is not dropped at the end. Without it, the run makes a database
+    /// of its own (the name has the time and the process ID) and drops it at the end.
+    #[arg(long, env = "MUDCAT_DB")]
+    db: Option<String>,
+    /// The server for the database that a run makes by itself (the database name is replaced).
+    #[arg(long, env = "MUDCAT_SERVER", default_value = "postgres://mudcat:mudcat@localhost:54329/postgres")]
+    server: String,
     #[arg(long, default_value = "target/evals-data")]
     data: String,
     #[arg(long)]
@@ -45,7 +50,14 @@ async fn main() -> anyhow::Result<()> {
         variants.retain(|v| a.variant.contains(&v.id));
     }
     let scale = Scale::parse(&a.scale).ok_or_else(|| anyhow::anyhow!("unknown scale {:?}: full, quick or smoke", a.scale))?;
-    let inst = Instance::open(&a.db, &a.data).await?;
+    let (db_url, own_db) = match &a.db {
+        Some(u) => (u.clone(), None),
+        None => {
+            let name = format!("mudcat_evals_{}_{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), std::process::id());
+            (evals::db_url_for(&a.server, &name), Some(name))
+        }
+    };
+    let inst = Instance::open(&db_url, &a.data).await?;
     let work = std::path::PathBuf::from(&a.data).join("work");
     let sem = Arc::new(tokio::sync::Semaphore::new(a.jobs));
     let started = std::time::Instant::now();
@@ -102,7 +114,20 @@ async fn main() -> anyhow::Result<()> {
     println!("\n{passed}/{} variants passed; {checks_ok}/{checks} checks; scale {}; {:.1}s", results.len(), a.scale, started.elapsed().as_secs_f64());
     std::fs::create_dir_all(&a.out)?;
     let name = if a.template.is_empty() && a.variant.is_empty() { format!("{}/latest-{}.json", a.out, a.scale) } else { format!("{}/partial.json", a.out) };
-    std::fs::write(&name, serde_json::to_string_pretty(&serde_json::json!({"scale": a.scale, "passed": passed, "variants": results.len(), "checks": checks, "checks_passed": checks_ok, "results": results}))?)?;
+    std::fs::write(&name, serde_json::to_string_pretty(&serde_json::json!({"stamp": evals::stamp(&a.scale), "database": db_url, "scale": a.scale, "passed": passed, "variants": results.len(), "checks": checks, "checks_passed": checks_ok, "results": results}))?)?;
+    if let Some(db) = own_db {
+        drop(inst);
+        match mudcat::instance::make_pool(&a.server, 1) {
+            Ok(p) => {
+                if let Ok(c) = p.get().await {
+                    if let Err(e) = c.batch_execute(&format!("drop database if exists \"{db}\" with (force)")).await {
+                        eprintln!("could not drop {db}: {e}");
+                    }
+                }
+            }
+            Err(e) => eprintln!("could not drop {db}: {e}"),
+        }
+    }
     if passed != results.len() {
         std::process::exit(1);
     }

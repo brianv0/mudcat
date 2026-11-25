@@ -319,3 +319,22 @@ pub async fn run_variant(base: &Arc<Instance>, tpl: &Template, v: &Variant, scal
     }
     result
 }
+
+/// The stamp that the runner and the benchmarks record in their results: the git commit, whether
+/// the working tree had changes, the scale and the date.
+pub fn stamp(scale: &str) -> Value {
+    let git = |args: &[&str]| std::process::Command::new("git").args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    // untracked files in evals/results or target do not count; those are outputs
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no"]).map(|s| !s.is_empty());
+    serde_json::json!({
+        "git_commit": git(&["rev-parse", "HEAD"]),
+        "git_dirty": dirty,
+        "scale": scale,
+        "date": chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// The URL of database `name` on the server of `server`.
+pub fn db_url_for(server: &str, name: &str) -> String {
+    crate::instance::db_url(server, name)
+}
