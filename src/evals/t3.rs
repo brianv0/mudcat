@@ -272,7 +272,14 @@ pub async fn removal(ctx: &mut Ctx) -> Result<()> {
     if let Some(b) = &blocked {
         ctx.check("The bytes exist, and the answer names the hold and its reason", bytes_exist && b["name"] == "litigation 22-cv-1" && b["reason"].as_str().map(|r| r.contains("22-cv-1")).unwrap_or(false), format!("{b}"));
         let comps = in_tx!(admin, |tx| crate::authz::compartments_of(&tx, "version", c).await?);
-        ctx.check("in the retention compartment", hold_id.map(|h| comps.contains(&format!("retention-{h}"))).unwrap_or(false), format!("{comps:?}"));
+        // and the access: a reader who is not a member of the compartment is denied the version, a member is allowed
+        let outsider = in_tx!(trainer, |tx| crate::authz::check(&tx, "read", "version", c).await?);
+        let member = in_tx!(admin, |tx| crate::authz::check(&tx, "read", "version", c).await?);
+        ctx.check(
+            "in the retention compartment",
+            hold_id.map(|h| comps.contains(&format!("retention-{h}"))).unwrap_or(false) && !outsider.allow && member.allow,
+            format!("{comps:?}; reader outside the compartment: {} ({}); member: {} ({})", outsider.allow, outsider.reason, member.allow, member.reason),
+        );
     }
     let _ = BTreeMap::<u8, u8>::new();
     Ok(())
