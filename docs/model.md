@@ -24,15 +24,18 @@ An entity is a node of a `mc:` class. "Subclass of" means `rdfs:subClassOf`.
 
 ### Identity
 
-Every entity has an immutable identifier. The catalog publishes this identifier as an IRI. Names, paths and external identifiers are **aliases**. They are unique within their scheme, and point to an identifier. Most aliases are mutable. Content-hash aliases are the exception: they never change.
+Every entity has two kinds of name:
 
-For every entity, versions and snapshots included, this identifier is a time-ordered UUID (UUIDv7). The instance that minted the UUID qualifies it. That instance is the entity's authority. The embedded timestamp is not a privacy risk, because the access model controls who can see an identifier. Also, UUIDv7 keeps index locality for inserts in time order.
+- **One ID.** The ID is a time-ordered UUID (UUIDv7). It is immutable, and the catalog publishes it as an IRI. The instance that minted the ID qualifies it. That instance is the entity's authority. This applies to every entity, versions and snapshots included.
+- **Any number of identifiers.** An **identifier** (`mc:Identifier`) is a name in a scheme: a path, a DOI, a name in another system. It is unique within its scheme and points to one ID. Most identifiers are mutable. DataCite calls these alternate identifiers.
 
-**Content hashes.** The content checksum of a version and the Merkle hash of a snapshot are content hashes. They are immutable, unique and verifiable attributes, not identifiers. The catalog also publishes each content hash as an alias.
+The embedded timestamp of a UUIDv7 is not a privacy risk, because the access model controls who can see an ID. Also, UUIDv7 keeps index locality for inserts in time order.
 
-**Agreement across instances.** An instance can register a replica of a version that another instance produced. In this case, it uses the identifier from the instance that produced the version. Registration is idempotent on (artifact, content checksum). Thus, independent instances that hold copies of the same content agree on its identity. This is important under shared custody (see [architecture.md](architecture.md)).
+**Content hashes.** The content checksum of a version and the Merkle hash of a snapshot are content hashes. They are immutable, unique and verifiable attributes, not IDs. The catalog also publishes each content hash as an identifier. These identifiers never change.
 
-External alias schemes include:
+**Agreement across instances.** An instance can register a replica of a version that another instance produced. In this case, it uses the ID from the instance that produced the version. Registration is idempotent on (artifact, content checksum). Thus, independent instances that hold copies of the same content agree on its identity. This is important under shared custody (see [architecture.md](architecture.md)).
+
+Identifier schemes include:
 
 - the path in the collection namespace;
 - Rucio `scope:name`;
@@ -45,7 +48,7 @@ This reverses two earlier designs. Datacat used the name plus the parent folder 
 
 ### Immutability
 
-Versions, snapshots, resolutions, policy decisions and provenance records are immutable after the catalog publishes them. Only aliases, refs (branch refs and tag refs), lifecycle status, replica state, grants and access-control lists are mutable.
+Versions, snapshots, resolutions, policy decisions and provenance records are immutable after the catalog publishes them. Only identifiers, refs (branch refs and tag refs), lifecycle status, replica state, grants and access-control lists are mutable.
 
 ## Entity overview
 
@@ -97,9 +100,9 @@ Evaluation -> EvaluationResult: generated
 
 These concepts come from iRODS and Datacat. The placement concepts come from Rucio.
 
-**Instance** (`mc:Instance`). An independently administered mudcat catalog. It has its own database, mints its own identifiers, makes its own access and policy decisions, and can federate with other instances (an iRODS zone).
+**Instance** (`mc:Instance`). An independently administered mudcat catalog. It has its own database, mints its own IDs, makes its own access and policy decisions, and can federate with other instances (an iRODS zone).
 
-**Collection** (`mc:Collection`). A node in the logical namespace (iRODS collection; Datacat folder). It contains artifacts and other collections. Its path is an alias. A collection can carry inherited defaults: access-control lists, metadata and provenance (for example, "instrument X produced everything under `/raw/campaign42`").
+**Collection** (`mc:Collection`). A node in the logical namespace (iRODS collection; Datacat folder). It contains artifacts and other collections. Its path is an identifier. A collection can carry inherited defaults: access-control lists, metadata and provenance (for example, "instrument X produced everything under `/raw/campaign42`").
 
 **Artifact** (`mc:Artifact`, subclass of `prov:Entity`). A logical unit of content, independent of how many revisions or copies exist (iRODS data object; Datacat dataset; Rucio file DID; GA4GH DRS object). An artifact can be a single file, an archive, an array store, a Lance dataset or an Iceberg table. The name follows the ML tools that use it for the same concept: W&B, MLflow, Kubeflow ML Metadata and LaminDB. Its mutable pointers are refs (section 4), for example `latest`.
 
@@ -157,7 +160,7 @@ Every field has:
 
 | Property | Term | Notes |
 |---|---|---|
-| Identifier | `mc:fieldId` | A UUIDv7. It does not change when the field gets a new name. Schema evolution and annotation sets refer to fields by this identifier, as Iceberg tables refer to columns by field ID |
+| ID | `mc:fieldId` | A UUIDv7. It does not change when the field gets a new name. Schema evolution and annotation sets refer to fields by this ID, as Iceberg tables refer to columns by field ID |
 | Name | `csvw:name` | Unique within its parent |
 | Description | `dcterms:description` | |
 | Logical datatype | `csvw:datatype` | XSD-based, with CSVW's derived types and formats |
@@ -228,7 +231,7 @@ An **element** is an addressable part of a version. A **selector** (`mc:Selector
 | Key set or row range | `mc:KeySelector`, `mc:RowRangeSelector` |
 | Hyperslab | `mc:HyperslabSelector`: per-dimension index or coordinate ranges |
 
-**The catalog enumerates elements only where the data enumerates them.** A **manifest** (`mc:Manifest`) lists the elements of one or more versions. It is a records-structured version with a fixed schema: element identifier, source, selector, fingerprints, and lineage fields. Arrays and streams usually have no manifest. Their coordinate system is the description, and selectors define their elements.
+**The catalog enumerates elements only where the data enumerates them.** A **manifest** (`mc:Manifest`) lists the elements of one or more versions. It is a records-structured version with a fixed schema: element ID, source, selector, fingerprints, and lineage fields. Arrays and streams usually have no manifest. Their coordinate system is the description, and selectors define their elements.
 
 ## 3. Metadata
 
@@ -295,7 +298,7 @@ Each output value records the enricher and its version as its assertion origin. 
 
 **Snapshots and collections.** Snapshots belong to datasets, not to collections. This follows Iceberg, where each table has its own snapshots and a namespace has none. mudcat gives three things for collections instead:
 
-- **History of a collection.** mudcat keeps the transaction-time history of collection membership, aliases and refs (section 5, time travel). Thus a reader can list a collection subtree "as of" a time without a snapshot.
+- **History of a collection.** mudcat keeps the transaction-time history of collection membership, identifiers and refs (section 5, time travel). Thus a reader can list a collection subtree "as of" a time without a snapshot.
 - **Atomic changes.** One conditional commit can add or change many artifacts in one or more collections, in one transaction. All of them appear at the same time.
 - **Snapshot on request.** A user can make a snapshot of a collection subtree as of a time. mudcat then makes a dataset whose snapshot contains the versions that the subtree held at that time, with a Merkle hash. The Butler's collection-snapshot proposal does the same. Such a snapshot can be published and cited like any other.
 
@@ -304,7 +307,7 @@ mudcat does not make a snapshot for each change to a collection, for two reasons
 - **Hot spots.** A hash over a subtree changes with each write under it. Every writer would then need a conditional update of the same ref at the root, and concurrent writers would conflict all the time.
 - **Size.** A collection that receives data all the time would make one snapshot for each change. The Butler team names one large, growing collection of raw data as a failure case. For such a collection, a dataset series with one snapshot for each period (for example one each day) is better.
 
-**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the instance-wide invalidation set instead (section 5).
+**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element ID or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the instance-wide invalidation set instead (section 5).
 
 **Representation** (`mc:Representation`, analogous to `dcat:Distribution`). One physical form of a snapshot, such as native HDF5, analysis-ready Zarr, Parquet, WebDataset shards or tokenized shards.
 
@@ -322,7 +325,7 @@ mudcat does not make a snapshot for each change to a collection, for two reasons
 |---|---|---|
 | Element | Size, duration, decode cost, label counts, quality score | Columns of the manifest |
 | Version (one file or object) | Bounds of promoted attributes; time span; spatial or coordinate extent of an array; set of sources; set of tag values; row and element counts; codec and resolution; measured decode time | Attributes in the `stats` namespace of the version |
-| Manifest | Bounds and counts over its entries; a Bloom or xor filter of element fingerprints and identifiers; a bitmap of the sources and tag values that its entries use; the centroid of its embeddings | A summary next to each manifest, as in an Iceberg manifest list |
+| Manifest | Bounds and counts over its entries; a Bloom or xor filter of element fingerprints and IDs; a bitmap of the sources and tag values that its entries use; the centroid of its embeddings | A summary next to each manifest, as in an Iceberg manifest list |
 | Snapshot | Distinct-value sketches, quantile sketches and histograms of promoted attributes; counts per source and per tag value | A statistics file that the snapshot refers to. The Puffin format of Iceberg is a candidate |
 
 Four rules keep statistics safe to use:
@@ -489,7 +492,7 @@ mudcat keeps the terms themselves (what a licence or contract says) separate fro
 | **Delete an artifact** | A **delete marker**: a new version with no content becomes `latest`. Object stores with versions, such as S3, use the same term for the same operation | Forward | Kept until the retention of the artifact ends | Kept. Older versions still resolve |
 | **Invalidate** | An **invalidation record** (`prov:wasInvalidatedBy` an `mc:Takedown` activity) on an element, version, source or snapshot, with the reason and the party that made the request | Retroactive | Kept until purge | Kept, with the invalidation record |
 | **Purge** | Removal of the bytes of each replica, with a **deletion receipt** (`mc:DeletionReceipt`) per replica: the content, the location, the time and the agent | Retroactive | Removed | Kept. Replicas get the state `retired` |
-| **Erase** | Removal of the catalog record. Only an **erasure record** stays: the identifier, the date, the reason and the stored content hash | Retroactive | Removed | Removed, except the erasure record |
+| **Erase** | Removal of the catalog record. Only an **erasure record** stays: the ID, the date, the reason and the stored content hash | Retroactive | Removed | Removed, except the erasure record |
 
 The rules:
 
@@ -502,12 +505,12 @@ The rules:
 
 ### Time travel
 
-A reader can resolve a dataset, an artifact or an alias "as of" a time T. Four rules apply:
+A reader can resolve a dataset, an artifact or an identifier "as of" a time T. Four rules apply:
 
 1. **History, not past permissions.** As-of resolution gives the membership and metadata as of T. But mudcat applies the access control, usage policy and invalidation set of now. A reader cannot use time travel to get content that mudcat invalidated after T.
 2. **Audit is separate.** An auditor who must know what mudcat permitted at T reads the recorded decisions. These are the decision in each resolution, with its authorization consistency token, and the audit log. Time travel does not compute past decisions again.
 3. **Retention limits time travel.** mudcat keeps published snapshots, so time travel to them always works. Unpublished snapshots expire. As-of resolution to a time whose snapshot expired fails with an error that states the expiry. It does not silently resolve to another snapshot.
-4. **Mutable state has a history.** mudcat keeps the transaction-time history of refs, aliases, ACLs, grants, replica states and lifecycle status. Thus, for example, an old path in a script resolves to the artifact that the path named at T. Some periods of validity are part of the data, for example the term of a licence or an embargo date. These are ordinary attributes, not a second time dimension.
+4. **Mutable state has a history.** mudcat keeps the transaction-time history of refs, identifiers, ACLs, grants, replica states and lifecycle status. Thus, for example, an old path in a script resolves to the artifact that the path named at T. Some periods of validity are part of the data, for example the term of a licence or an embargo date. These are ordinary attributes, not a second time dimension.
 
 ## 6. Provenance
 
@@ -558,7 +561,7 @@ A combination of values from different methods needs a declared equivalence (`mc
 - `declared`: reported by the client SDK;
 - `imported`: received as OpenLineage events or from an experiment tracker.
 
-Manifest columns carry **element-level lineage**: parent element identifiers, or a parent selector for arrays and streams.
+Manifest columns carry **element-level lineage**: parent element IDs, or a parent selector for arrays and streams.
 
 **The experimental loop.** A model generates a **candidate** (`mc:Candidate`): a domain entity with a canonical identity. An `mc:Experiment` uses the candidate and generates results. These results go into a new snapshot. Because every version is immutable, the lineage graph stays acyclic across model generations.
 
@@ -629,7 +632,7 @@ External movers do the transfers. mudcat records the requests and their outcomes
 
 ## 10. Open questions
 
-- **Element identifiers.** Should element identifiers be IRIs in all exports? This is cheap for manifests, but at 10^11 elements the RDF serialisation must stay optional.
+- **Element IDs.** Should element IDs be IRIs in all exports? This is cheap for manifests, but at 10^11 elements the RDF serialisation must stay optional.
 - **Grant vocabulary.** Which actions and purposes the first release enumerates, and how much of ODRL the compiler translates automatically.
 - **Snapshot hashing.** How mudcat canonicalises the snapshot hash: member order, and if the hash includes annotation sets.
 - **Sample identity across rules.** If sample rules for arrays should produce stable sample identifiers, or if selectors are enough.

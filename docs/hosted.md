@@ -140,9 +140,9 @@ The gateway runs next to the customer's metadata store, and holds the customer's
   - the control plane evaluates the predicates on vendor-held attributes;
   - the customer gateway evaluates the predicates on customer-held attributes and returns the matching identifiers.
 
-  The control plane then joins the two results by identifier. The gateway never returns values, only identifiers. For customer-encrypted attributes, the gateway computes the blind-index value of the query literal, and the control plane matches it.
+  The control plane then joins the two results by ID. The gateway never returns values, only IDs. For customer-encrypted attributes, the gateway computes the blind-index value of the query literal, and the control plane matches it.
 - **The web UI.** The browser gets customer-held values directly from the customer gateway, with the user's own token, and shows them next to the rest of the page. The values never pass through the vendor.
-- **Usage policy.** Some policy decisions depend on customer-held values, for example consent status at resolution. For these, the policy engine sends the identifiers and the condition to the customer gateway. The gateway returns the decision and a signature. mudcat records the decision and the signature in the policy decision of the resolution, but not the values.
+- **Usage policy.** Some policy decisions depend on customer-held values, for example consent status at resolution. For these, the policy engine sends the IDs and the condition to the customer gateway. The gateway returns the decision and a signature. mudcat records the decision and the signature in the policy decision of the resolution, but not the values.
 - **Search indexes.** The control plane's search and vector indexes contain only vendor-held attributes. A customer can run an index of its own behind the gateway. The query compiler then sends text predicates on customer-held fields to it.
 - **Availability.** If the customer gateway is not available, mudcat rejects queries and resolutions that need customer-held metadata. Queries that do not need it continue to work.
 

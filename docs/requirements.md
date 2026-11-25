@@ -40,12 +40,12 @@ Identifier prefixes:
 
 | ID | Requirement | Rationale | Ver. |
 |---|---|---|---|
-| ID-1 | mudcat shall give each entity an immutable identifier that is a UUIDv7 qualified by the instance that minted it. | UUIDv7 keeps index locality for inserts in time order; the Butler changed to UUIDv7 for this reason. The access model controls who can see an identifier, so the embedded timestamp is not a privacy risk. | I |
-| ID-2 | mudcat shall resolve each alias to exactly one identifier within the scheme of the alias. | Names, paths and external identifiers change. Lineage and policy must not break when they change. | T |
+| ID-1 | mudcat shall give each entity an immutable ID that is a UUIDv7 qualified by the instance that minted it. | UUIDv7 keeps index locality for inserts in time order; the Butler changed to UUIDv7 for this reason. The access model controls who can see an ID, so the embedded timestamp is not a privacy risk. | I |
+| ID-2 | mudcat shall resolve each identifier to exactly one ID within the scheme of the identifier. | Paths and names in other systems change. Lineage and policy must not break when they change. | T |
 | ID-3 | mudcat shall reject a change to the content, the members or the metadata of a published version, a published snapshot, a resolution or a provenance record. | Immutable entities make reproduction, verification and replication across instances possible. | T |
 | ID-4 | mudcat shall record a content checksum for each version, with the checksum algorithm. | Storage resources compute different algorithms; integrity checks need the algorithm with the value. | T |
 | ID-5 | mudcat shall compute a Merkle hash for each published snapshot from the hashes of its members. | A party that holds the hashes can verify a snapshot without trust in the database of another instance. | T |
-| ID-6 | When an instance registers a replica of a version that another instance produced, mudcat shall use the identifier that the producing instance minted. | Instances under shared custody must agree on identity without coordination at write time. | T |
+| ID-6 | When an instance registers a replica of a version that another instance produced, mudcat shall use the ID that the producing instance minted. | Instances under shared custody must agree on identity without coordination at write time. | T |
 | ID-7 | mudcat shall move a branch only if the branch points to the snapshot that the request states. | Concurrent writers must not lose each other's changes; Iceberg commits use the same optimistic concurrency. | T |
 | ID-8 | mudcat shall keep each published snapshot until a person withdraws it. | Citations refer to published snapshots. | T |
 | ID-9 | mudcat shall expire a snapshot that is not published only if no ref and no resolution refers to it. | Snapshots that no process uses must not use storage for ever, but expiry must not break a reference. | T |
@@ -112,9 +112,9 @@ Identifier prefixes:
 | UP-8 | mudcat shall not purge or erase data that a legal hold covers. | Preservation orders override deletion. | T |
 | UP-9 | mudcat shall exclude invalidated content from each resolution, for snapshots made before and after the invalidation. | A takedown must take effect at once, also for training sets that exist. | T |
 | UP-10 | mudcat shall keep the Merkle hash of a snapshot after it purges content of that snapshot. | The hash proves what the snapshot contained. | T |
-| UP-11 | When mudcat erases an entity, mudcat shall keep only its identifier, the date, the reason and, unless the hash can identify a person, its content hash. | Erasure requests can cover metadata; the erasure record must not keep what the request removes. | T |
+| UP-11 | When mudcat erases an entity, mudcat shall keep only its ID, the date, the reason and, unless the hash can identify a person, its content hash. | Erasure requests can cover metadata; the erasure record must not keep what the request removes. | T |
 | UP-12 | mudcat shall apply the access control, usage policy and invalidation set that are in effect now to each as-of resolution. | Time travel must not give back access that a takedown or revocation removed. | T |
-| UP-13 | mudcat shall keep the transaction-time history of refs, aliases, ACLs, grants, replica states and lifecycle status. | Old scripts and audits must resolve names and decisions as they were. | T |
+| UP-13 | mudcat shall keep the transaction-time history of refs, identifiers, ACLs, grants, replica states and lifecycle status. | Old scripts and audits must resolve names and decisions as they were. | T |
 | UP-14 | mudcat shall return an error that states the expiry when an as-of resolution needs an expired snapshot. | A silent resolution to another snapshot would break reproducibility. | T |
 | UP-15 | mudcat shall accept a manifest at resolution without a check of each element only if every source that the manifest uses permits the requested action and purpose, and no entry is in the invalidation set. | A check of each element is too slow at 10^11 elements, but a shortcut must not let excluded data through. | T |
 

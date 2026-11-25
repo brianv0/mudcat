@@ -49,7 +49,7 @@ Other schema languages follow the same pattern: the CF conventions, AnnData obs 
   - Format plugin library: astropy.
   - Viewers for the web UI: images and spectra.
 - **Semantic vocabularies:** IVOA UCDs as semantic tags; IVOA units.
-- **Identifiers:** IVOA identifiers as an external alias scheme.
+- **Identifiers:** IVOA identifiers as an identifier scheme.
 - **Reference data:** observations, exposures, instruments, filters, calibrations.
 - **Gateways:** IVOA TAP. The gateway generates TAP_SCHEMA from the catalog's CSVW descriptions through the Felis profile. ObsCore and DataLink are possible later.
 - **Policy conventions:** proprietary periods for each observation, for example `release_date <= now()` unless the caller is in the group of the observing proposal. Data-rights holders as a group in the access model.

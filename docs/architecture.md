@@ -129,7 +129,7 @@ Interactive single writes bypass the queue but use the same transaction code.
 
 The catalog database is PostgreSQL with one schema per model area: namespace and storage, structure, metadata, datasets, policy, provenance, placement.
 
-- **Identifiers:** UUIDv7 primary keys for every entity, versions and snapshots included. They keep index locality for time-ordered inserts (the Butler also made this change). The embedded timestamp is not a privacy risk, because the access model controls who can see an identifier. A separate table holds aliases, with a unique index per scheme.
+- **IDs and identifiers:** UUIDv7 primary keys (IDs) for every entity, versions and snapshots included. They keep index locality for time-ordered inserts (the Butler also made this change). The embedded timestamp is not a privacy risk, because the access model controls who can see an ID. A separate table holds identifiers (paths, DOIs, names in other systems), with a unique index per scheme.
 - **Paths:** the catalog stores paths as materialised paths in `ltree`, so it evaluates path globs and ACL inheritance in SQL. This removes Datacat's Java tree walk and its temporary tables.
 - **Metadata:** the catalog stores metadata as JSONB documents. It promotes declared attributes to typed, indexed columns. GIN indexes serve equality and containment queries. Range queries and sorts need the promoted columns.
 - **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by instance and namespace.
@@ -189,7 +189,7 @@ The resolver serves reads, but it is not in the data path:
   - the **resolved manifest**, as Arrow files that list elements, selectors and replica URLs;
   - **credentials:** signed URLs, or vended credentials scoped to a prefix. The resolver issues prefix-scoped credentials only if the prefix is fully inside one ACL root that the caller can read. If not, the resolver issues signed URLs per object, in batches, as the job requests them. The resolver checks read permission on a snapshot once, at the snapshot. This check then covers all of the snapshot's members;
   - a **run token** that ties the job's reads to an activity record.
-- **Resolution in parts.** A large request can resolve to billions of elements. In this case, the resolver plans the resolution, as the server-side scan planning of the Iceberg REST catalog does. It returns a plan identifier and a list of parts. Workers then get the parts in parallel. Each part is a manifest file with its credentials.
+- **Resolution in parts.** A large request can resolve to billions of elements. In this case, the resolver plans the resolution, as the server-side scan planning of the Iceberg REST catalog does. It returns a plan ID and a list of parts. Workers then get the parts in parallel. Each part is a manifest file with its credentials.
 - **Observed capture.** The resolver logs the credentials that it issues under a run token. These logs give the `observed` usage relations.
 
 ### Planning with statistics
@@ -275,7 +275,7 @@ Managed offerings change often. Before you choose one, confirm the current offer
 
 Only optional extensions may use provider-specific features, such as SpiceDB's native relationship expiry or its all-parents arrow. The core schema never uses them.
 
-**Identifiers.** mudcat identifies objects as `type:uuid`, with no paths or names. Thus renames never touch the authorization service. Identifiers also stay within the length and character limits of the provider.
+**Object IDs.** mudcat identifies objects as `type:uuid`, with no paths or names. Thus renames never touch the authorization service. Object IDs also stay within the length and character limits of the provider.
 
 **Consistency of the two stores.**
 
@@ -319,7 +319,7 @@ Adapters translate external records into activities and qualified relations, and
 - Nextflow and Snakemake provenance;
 - Hugging Face revisions.
 
-The adapters match external identifiers through aliases. If an adapter cannot match an event, the event creates a placeholder entity. mudcat reconciles this entity later.
+The adapters match the names that external tools use through identifiers. If an adapter cannot match an event, the event creates a placeholder entity. mudcat reconciles this entity later.
 
 ### Placement reconciler
 
@@ -445,7 +445,7 @@ mudcat delegates to another system when that system is the authority by nature, 
 | Checksums | Storage-provided checksums where they exist | Periodic re-verification on a policy schedule |
 | Internal file lists of tables | Iceberg, Delta, Lance and Icechunk metadata | The catalog pins a table snapshot identifier; it does not copy the file list |
 | Query execution over manifests | DuckDB, DataFusion, Trino | Results are traceable to registered manifests |
-| Run tracking | MLflow, Weights & Biases, workflow engines | Lineage ingest matches identifiers through aliases |
+| Run tracking | MLflow, Weights & Biases, workflow engines | Lineage ingest matches external names through identifiers |
 | Training inside an enclave, or federated learning at a partner | The enclave or partner | mudcat records the activity with its location and inputs; obligations attach to the model that the activity produces |
 
 mudcat never delegates usage-policy decisions: the evaluation at resolution, and the propagation of duties. These are the system's purpose. They depend on lineage that only the catalog holds.
@@ -496,7 +496,7 @@ mudcat treats this as federation with a shared namespace. It splits authority by
 
 Three mechanisms make this work without shared mutable state:
 
-- **Identifiers of the producer.** An instance that registers a replica of a version that another instance produced uses the UUIDv7 identifier that the producing instance minted. Registration is idempotent on (artifact, content checksum), so independent registrations of the same content converge. The Butler reaches the same goal with deterministic UUIDs. mudcat reaches it because it carries the identifier of the producer.
+- **IDs of the producer.** An instance that registers a replica of a version that another instance produced uses the ID that the producing instance minted. Registration is idempotent on (artifact, content checksum), so independent registrations of the same content converge. The Butler reaches the same goal with deterministic UUIDs. mudcat reaches it because it carries the ID of the producer.
 - **Verifiable snapshot hashes.** Each snapshot carries a Merkle hash that anyone can verify. Thus anyone who holds the hashes can verify a release of parts that different instances own. No instance has to trust another instance's database.
 - **The federation feed.** Corrections and invalidations flow from producers, and completeness flows from custodians, as signed events. A failure to apply one is visible, because each custodian publishes the snapshot hashes that it holds completely.
 
