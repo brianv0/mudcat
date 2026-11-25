@@ -78,6 +78,9 @@ async fn ranges(tx: &Tx<'_>, ids: &[Uuid]) -> Result<Vec<(Uuid, (f64, f64))>> {
 }
 
 fn overlap(a: (f64, f64), b: (f64, f64)) -> bool {
+    if crate::mutant("overlap-strict") {
+        return a.0 < b.1 && b.0 < a.1;
+    }
     a.0 <= b.1 && b.0 <= a.1
 }
 

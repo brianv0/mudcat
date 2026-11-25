@@ -17,6 +17,9 @@ STAMP="$(git rev-parse HEAD) dirty=$([ -n "$(git status --porcelain --untracked-
 ALL=(no-invalidation expired-grant-ok no-compartment search-no-recheck no-stream-filter wide-prefix merkle-constant tag-ref-movable no-branch-lock relay-xid-rule)
 # the tenant move with more than one server process (tests/tenant_move_processes.rs, T5.4)
 ALL+=(no-home-check no-move-fence cleanup-no-drain)
+# the second sample (evals/README.md, "The second sample"): ten defects that the author of the product did not choose
+SAMPLE2=(expire-ignores-resolution tag-inherit-top-wins purge-hold-first-only jurisdiction-first-only completeness-any-verified sync-keeps-leavers lineage-depth-off-by-one poll-floor-off-by-one overlap-strict register-latest-only)
+ALL+=("${SAMPLE2[@]}")
 RUNS_TIMING=3   # defects that depend on timing run this many times
 TIMING=(relay-xid-rule)
 

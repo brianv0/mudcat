@@ -651,7 +651,12 @@ async fn register_in(tx: &mut Tx<'_>, coll: &Collection, req: &Register) -> Resu
     // idempotency: the same artifact and checksum is the same version (OP-5, INV-13)
     if let Some(h) = &req.content_hash {
         if !new_artifact {
-            if let Some(r) = tx.qopt("select id, number from version where artifact_id = $1 and content_hash = $2", &[&artifact_id, h]).await? {
+            let same = if crate::mutant("register-latest-only") {
+                "select id, number from version where artifact_id = $1 and content_hash = $2 and id = (select latest_version_id from artifact where id = $1)"
+            } else {
+                "select id, number from version where artifact_id = $1 and content_hash = $2"
+            };
+            if let Some(r) = tx.qopt(same, &[&artifact_id, h]).await? {
                 let vid: Uuid = r.get(0);
                 let replica_id = match &req.replica {
                     Some(spec) => add_replica_quiet(tx, vid, coll, &name, spec).await?,

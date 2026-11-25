@@ -691,7 +691,7 @@ pub async fn purge(tx: &mut Tx<'_>, versions: &[Uuid], reason: &str) -> Result<R
         }
     }
     out.invalidation = ensure_invalidated(tx, versions, reason).await?;
-    for v in versions {
+    for v in versions.iter().take(if crate::mutant("purge-hold-first-only") { 1 } else { usize::MAX }) {
         if let Some((hid, name, hreason)) = hold_on(tx, *v).await? {
             tx.sess.audit("deletion", "purge", &format!("version:{v}"), false, Some(&format!("legal hold {name}: {hreason}")), json!({"hold": hid})).await?;
             for x in versions {

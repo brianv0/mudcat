@@ -444,7 +444,7 @@ async fn resolve_inner(sess: &Session, req: &Request, again_of: Option<Uuid>) ->
     let vinfos = namespace::versions(&tx, &fixed.iter().flat_map(|f| f.versions.iter().map(|e| e.member_id)).collect::<Vec<_>>()).await?;
     let vmap: HashMap<Uuid, VersionInfo> = vinfos.into_iter().map(|v| (v.id, v)).collect();
     let colls: BTreeSet<Uuid> = vmap.values().map(|v| v.collection_id).collect();
-    for c in &colls {
+    for c in colls.iter().take(if crate::mutant("jurisdiction-first-only") { 1 } else { usize::MAX }) {
         for (name, value) in crate::metadata::effective_tags(&tx, *c).await? {
             let rows = tx.q("select config from tag_policy where name = $1 and value = $2 and kind = 'jurisdiction'", &[&name, &value]).await?;
             for r in rows {

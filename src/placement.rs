@@ -119,7 +119,7 @@ pub async fn refresh_completeness(tx: &mut Tx<'_>, subject: Uuid, resource: Uuid
         .await?
         .get(0);
     let total = versions.len() as i64;
-    let complete = total > 0 && verified == total;
+    let complete = total > 0 && if crate::mutant("completeness-any-verified") { verified > 0 } else { verified == total };
     let commit = tx.commit_id().await?;
     let prev: Option<bool> = tx.qopt("select complete from completeness where subject_id = $1 and resource_id = $2", &[&subject, &resource]).await?.map(|r| r.get(0));
     tx.exec(

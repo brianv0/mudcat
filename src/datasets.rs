@@ -1065,15 +1065,16 @@ pub async fn seal(tx: &mut Tx<'_>, dataset: &str, branch: &str) -> Result<Option
 /// Expire unpublished snapshots that are older than the retention of their dataset and that no
 /// ref and no resolution refers to (ID-9). Remove the manifests that only they used.
 pub async fn expire(tx: &mut Tx<'_>) -> Result<Vec<Uuid>> {
+    let ignore_resolutions = crate::mutant("expire-ignores-resolution");
     let rows = tx
         .q(
             "select s.id from snapshot s join dataset d on d.id = s.dataset_id and d.tenant_id = s.tenant_id
               where s.status is null and s.expired_at is null
                 and s.created_at < $1::timestamptz - make_interval(days => d.retention_days)
                 and not exists (select 1 from ref r where r.snapshot_id = s.id)
-                and not exists (select 1 from resolution x where x.inputs::text like '%' || s.id::text || '%')
+                and ($2 or not exists (select 1 from resolution x where x.inputs::text like '%' || s.id::text || '%'))
                 and not exists (select 1 from manifest_entry e where e.member_id = s.id)",
-            &[&tx.now],
+            &[&tx.now, &ignore_resolutions],
         )
         .await?;
     let ids: Vec<Uuid> = rows.iter().map(|r| r.get(0)).collect();

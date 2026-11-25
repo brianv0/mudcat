@@ -196,7 +196,7 @@ pub async fn poll(sess: &Session, from: i64, limit: i64, subscription: Option<Uu
     let tx = sess.begin(&mut c).await?;
     let st = tx.qopt("select last_position, floor from stream_state", &[]).await?;
     let (last, floor): (i64, i64) = st.map(|r| (r.get(0), r.get(1))).unwrap_or((0, 0));
-    if from < floor {
+    if from + i64::from(crate::mutant("poll-floor-off-by-one")) < floor {
         return Err(Error::refused(
             "position-too-old",
             format!("the position {from} is older than the retention of change events (the oldest kept position is {}); ask for a backfill", floor + 1),
