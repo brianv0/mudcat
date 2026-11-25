@@ -134,6 +134,7 @@ Identifier prefixes:
 | RD-6 | mudcat shall skip a manifest or a file during planning only if its statistics prove that no element inside it matches the request. | Statistics must make plans faster without a change to their results. | T |
 | RD-7 | mudcat shall return, with each task of a resolution plan, the expected bytes, the expected number of elements and the replica location. | Compute engines need these values to size and place their tasks. | T |
 | RD-8 | mudcat shall provide read and write connectors for Ray Data that pass the run token of the job. | Lineage must come from the jobs that use the data, without extra code in each job. | D |
+| RD-9 | mudcat shall not resolve data for a caller in a location that the jurisdiction rules of that data do not permit. | Rules for the export of data also cover access from another country to data that stays in place; see grounding use case 1. | T |
 
 ## Placement and federation
 
