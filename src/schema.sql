@@ -928,6 +928,10 @@ begin
     execute format('alter table %I force row level security', t);
     execute format('drop policy if exists tenant_isolation on %I', t);
     execute format('create policy tenant_isolation on %I using (tenant_id = mc_tenant()) with check (tenant_id = mc_tenant())', t);
+    -- no statistics on the tenant column: the planner evaluates mc_tenant() when it estimates, and
+    -- a tenant that the statistics do not know yet would look empty, which makes a scan of the
+    -- whole tenant look as cheap as a lookup by key
+    execute format('alter table %I alter column tenant_id set statistics 0', t);
   end loop;
 end $$;
 

@@ -374,20 +374,50 @@ pub async fn invalidation_set(tx: &Tx<'_>) -> Result<InvalidationSet> {
     Ok(s)
 }
 
-/// The versions among `ids` that the invalidation set excludes as a whole.
+/// The versions among `ids` that the invalidation set excludes as a whole. The set is small (it
+/// is tenant-wide, with one record for each takedown), so the check is a set lookup for each
+/// version; fingerprints go through the content-identity index. An ID with no version (an
+/// erased version) counts as excluded.
 pub async fn invalidated_versions(tx: &Tx<'_>, ids: &[Uuid]) -> Result<BTreeSet<Uuid>> {
-    let rows = tx
-        .q(
-            "select v.id from version v where v.id = any($1) and exists (select 1 from invalidation i where
-                (i.target_kind = 'version' and i.target = v.id::text) or (i.target_kind = 'artifact' and i.target = v.artifact_id::text)
-                or (i.target_kind = 'source' and i.target = v.source_id::text)
-                or (i.target_kind = 'fingerprint' and (i.target = v.content_hash
-                    or exists (select 1 from identity_index x where x.version_id = v.id and x.element_id = '' and x.key = i.target))))
-             union select x from unnest($1::uuid[]) x where not exists (select 1 from version v where v.id = x)",
-            &[&ids],
-        )
-        .await?;
-    Ok(rows.iter().map(|r| r.get(0)).collect())
+    let set = invalidation_set(tx).await?;
+    let rows = tx.q("select id, artifact_id::text, source_id::text, content_hash from version where id = any($1)", &[&ids]).await?;
+    let mut out: BTreeSet<Uuid> = ids.iter().copied().collect();
+    for r in &rows {
+        out.remove(&r.get::<_, Uuid>(0));
+    }
+    if set.is_empty() {
+        return Ok(out);
+    }
+    for r in &rows {
+        let id: Uuid = r.get(0);
+        let a: String = r.get(1);
+        let src: Option<String> = r.get(2);
+        let h: Option<String> = r.get(3);
+        if set.versions.contains(&id.to_string())
+            || set.artifacts.contains(&a)
+            || src.map(|x| set.sources.contains(&x)).unwrap_or(false)
+            || h.map(|x| set.fingerprints.contains(&x)).unwrap_or(false)
+        {
+            out.insert(id);
+        }
+    }
+    if !set.fingerprints.is_empty() {
+        let fps: Vec<String> = set.fingerprints.iter().cloned().collect();
+        for r in tx.q("select distinct version_id from identity_index where key = any($1) and element_id = '' and version_id = any($2)", &[&fps, &ids]).await? {
+            out.insert(r.get(0));
+        }
+    }
+    let wanted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+    for sid in &set.snapshots {
+        if let Ok(snap) = sid.parse::<Uuid>() {
+            for e in crate::datasets::members(tx, snap).await? {
+                if wanted.contains(&e.member_id) {
+                    out.insert(e.member_id);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 pub async fn is_invalidated(tx: &Tx<'_>, id: Uuid) -> Result<bool> {

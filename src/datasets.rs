@@ -380,8 +380,14 @@ async fn commit_one(tx: &mut Tx<'_>, ch: &DatasetChange) -> Result<Committed> {
         None if strict => return Err(Error::invalid("a commit that removes or replaces members needs a requirement on the current snapshot")),
         _ => {}
     }
-    let parent_entries = members(tx, head).await?;
-    let present: HashMap<Uuid, &Entry> = parent_entries.iter().map(|e| (e.member_id, e)).collect();
+    // only the members that the commit names are read from the parent, not all of its members
+    let mut named: Vec<Uuid> = ch.remove.clone();
+    named.extend(ch.replace.iter().map(|(old, _)| *old));
+    named.extend(ch.add.iter().map(|m| m.id));
+    named.extend(ch.replace.iter().map(|(_, new)| new.id));
+    let present_owned = lookup_members(tx, head, &named).await?;
+    let present: HashMap<Uuid, &Entry> = present_owned.iter().map(|(k, v)| (*k, v)).collect();
+    let parent = snapshot(tx, head).await?;
 
     let mut removed: Vec<Uuid> = ch.remove.clone();
     removed.extend(ch.replace.iter().map(|(old, _)| *old));
@@ -478,8 +484,12 @@ async fn commit_one(tx: &mut Tx<'_>, ch: &DatasetChange) -> Result<Committed> {
     }
     let removed_bytes: i64 = removed.iter().map(|m| present[m].size).sum();
     let added_bytes: i64 = added.iter().map(|e| e.size).sum();
-    let count = parent_entries.len() as i64 - removed.len() as i64 + added.len() as i64;
-    let total_bytes: i64 = parent_entries.iter().filter(|e| !removed_set.contains(&e.member_id)).map(|e| e.size).sum::<i64>() + added_bytes;
+    let count = parent.member_count - removed.len() as i64 + added.len() as i64;
+    let parent_bytes = match parent.summary["total_bytes"].as_i64() {
+        Some(b) => b,
+        None => members(tx, head).await?.iter().map(|e| e.size).sum(),
+    };
+    let total_bytes: i64 = parent_bytes - removed_bytes + added_bytes;
     let operation = match (added.is_empty(), removed.is_empty()) {
         (false, true) if added.iter().all(|e| e.member_kind == "annotation-set") => "annotate",
         (false, true) => "add",
@@ -494,8 +504,21 @@ async fn commit_one(tx: &mut Tx<'_>, ch: &DatasetChange) -> Result<Committed> {
         &[&snap, &did, &head, &commit, &tx.now, &summary, &count],
     )
     .await?;
-    let (warnings, equivalences) = method_check(tx, snap).await?;
-    let warnings_v = json!(warnings.iter().map(|w| w.to_json()).collect::<Vec<_>>());
+    // the method rule: a commit that only adds versions of sources that the parent already has
+    // keeps the warnings and equivalences of the parent; other commits check all sources
+    let parent_sources: BTreeSet<Uuid> = tx
+        .q("select distinct unnest(m.sources) from manifest_ref r join manifest m on m.id = r.manifest_id and m.tenant_id = r.manifest_tenant where r.snapshot_id = $1", &[&head])
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    let same_sources = removed.is_empty() && added.iter().all(|e| e.member_kind != "snapshot" && e.source_id.map(|s| parent_sources.contains(&s)).unwrap_or(true));
+    let (warnings_v, equivalences) = if same_sources {
+        (parent.warnings.clone(), parent.equivalences.clone())
+    } else {
+        let (warnings, equivalences) = method_check(tx, snap).await?;
+        (json!(warnings.iter().map(|w| w.to_json()).collect::<Vec<_>>()), equivalences)
+    };
     tx.exec("update snapshot set warnings = $2, equivalences = $3 where id = $1", &[&snap, &warnings_v, &equivalences]).await?;
     set_ref(tx, did, &ch.branch, "branch", snap).await?;
     let root = crate::metadata::acl_root_of(tx, did).await?;
@@ -510,6 +533,28 @@ async fn commit_one(tx: &mut Tx<'_>, ch: &DatasetChange) -> Result<Committed> {
     tx.emit("snapshot.committed", snap, "snapshot", root, data).await?;
     tx.emit("ref.moved", did, "dataset", root, json!({"ref": ch.branch, "snapshot": snap, "previous": head})).await?;
     Ok(Committed { dataset: did, snapshot: snap, parent: Some(head), summary, warnings: warnings_v })
+}
+
+/// The entries of a snapshot among some member IDs, through its manifest references.
+async fn lookup_members(tx: &Tx<'_>, snap: Uuid, ids: &[Uuid]) -> Result<HashMap<Uuid, Entry>> {
+    let me = tx.sess.tenant_id()?;
+    let foreign: i64 = tx.q1("select count(*) from manifest_ref where snapshot_id = $1 and manifest_tenant <> $2", &[&snap, &me]).await?.get(0);
+    if foreign > 0 {
+        let wanted: HashSet<Uuid> = ids.iter().copied().collect();
+        return Ok(members(tx, snap).await?.into_iter().filter(|e| wanted.contains(&e.member_id)).map(|e| (e.member_id, e)).collect());
+    }
+    let rows = tx
+        .q(
+            "select e.member_id, e.member_kind, e.member_hash, e.source_id, e.size, e.element_count
+               from manifest_ref r join manifest_entry e on e.manifest_id = r.manifest_id and e.tenant_id = r.manifest_tenant
+              where r.snapshot_id = $1 and e.member_id = any($2) and not (e.member_id = any(r.excluded))",
+            &[&snap, &ids],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| (r.get(0), Entry { member_id: r.get(0), member_kind: r.get(1), member_hash: r.get(2), source_id: r.get(3), size: r.get(4), element_count: r.get(5) }))
+        .collect())
 }
 
 async fn insert_entries(tx: &Tx<'_>, mid: Uuid, entries: &[Entry]) -> Result<()> {
