@@ -766,3 +766,19 @@ pub async fn models_with_newer_inputs(tx: &Tx<'_>) -> Result<Vec<Value>> {
     }
     Ok(out)
 }
+
+/// The exact inputs that an activity (for example an answer of an assistant) cited: the
+/// versions it used, with their selectors and roles.
+pub async fn cited_inputs(tx: &Tx<'_>, activity: Uuid) -> Result<Vec<(Uuid, Option<Value>, String)>> {
+    if tx.qopt("select 1 from activity where id = $1", &[&activity]).await?.is_none() {
+        return Err(Error::NotFound);
+    }
+    let rows = tx
+        .q(
+            "select u.entity_id, u.selector, u.role from usage u join version v on v.id = u.entity_id and v.tenant_id = u.tenant_id
+              where u.activity_id = $1 order by u.entity_id",
+            &[&activity],
+        )
+        .await?;
+    Ok(rows.iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+}
