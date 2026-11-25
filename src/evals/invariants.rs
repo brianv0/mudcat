@@ -151,9 +151,10 @@ pub async fn check(ctx: &mut Ctx, id: &str) -> Result<(bool, String)> {
         }
         // the answer for an ID of another tenant is the same as for an ID that does not exist
         "INV-7" => {
-            let others: Vec<Uuid> = ctx.inst.tenants.read().keys().copied().filter(|t| *t != ctx.tenant.id).collect();
-            let Some(other) = others.first() else { return Ok((true, "one tenant only".into())) };
-            let os = ctx.inst.session(*other, Principal::system());
+            // only a tenant that this variant made: the tenants of other variants and of earlier
+            // runs are not its business, and they can be gone
+            let Some(other) = ctx.record.other_tenants.first().copied() else { return Ok((true, "the variant made one tenant only".into())) };
+            let os = ctx.inst.session(other, Principal::system());
             let foreign: Option<Uuid> = in_tx!(os, |tx| tx.qopt("select id from entity limit 1", &[]).await?.map(|r| r.get(0)));
             let Some(foreign) = foreign else { return Ok((true, String::new())) };
             let mine = ctx.admin.clone();

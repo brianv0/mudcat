@@ -93,6 +93,8 @@ pub struct Record {
     pub notes: Vec<String>,
     /// databases that the variant made and that the runner drops at its end
     pub cleanup_databases: Vec<String>,
+    /// the other tenants that the variant made
+    pub other_tenants: Vec<Uuid>,
 }
 
 pub struct Ctx {
@@ -279,6 +281,11 @@ pub async fn run_variant(base: &Arc<Instance>, tpl: &Template, v: &Variant, scal
                 let _ = c.batch_execute(&format!("drop database if exists \"{db}\" with (force)")).await;
             }
         }
+        // the registry must not name a tenant in a database that is gone
+        if let Ok(c) = inst.shared.get().await {
+            let _ = c.execute("delete from tenant where location = $1", &[db]).await;
+        }
+        inst.tenants.write().retain(|_, t| &t.location != db);
     }
     result
 }

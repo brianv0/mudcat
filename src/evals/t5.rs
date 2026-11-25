@@ -86,6 +86,7 @@ pub async fn tenant_isolation(ctx: &mut Ctx) -> Result<()> {
     let other_target = ctx.is("target", "id-of-other-tenant");
     let inst = ctx.inst.clone();
     let other = crate::tenants::create_tenant(&inst, &format!("{}-b", ctx.tenant.name), "user:admin-b").await?;
+    ctx.record.other_tenants.push(other.id);
     let mine = tenant_data(&ctx.admin.clone(), &inst).await?;
     let theirs = tenant_data(&inst.session(other.id, Principal::user("admin-b")), &inst).await?;
     ctx.step().await?;
@@ -363,6 +364,7 @@ pub async fn tenant_move(ctx: &mut Ctx) -> Result<()> {
     let tid = ctx.tenant.id;
     // a neighbour in the shared tier
     let neighbour = crate::tenants::create_tenant(&inst, &format!("{}-n", ctx.tenant.name), "user:admin-n").await?;
+    ctx.record.other_tenants.push(neighbour.id);
     let ns = inst.session(neighbour.id, Principal::user("admin-n"));
     let nregs: Vec<Register> = (0..20).map(|i| Register { path: format!("/n/f{i}"), content_hash: Some(format!("n{i}")), size: 1, ..Default::default() }).collect();
     in_tx!(ns, |tx| namespace::register_batch(&mut tx, &nregs).await?);

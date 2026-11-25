@@ -160,7 +160,22 @@ The last full run passed 280 of 280 variants and 1,065 of 1,065 checks; it takes
 
 For each variant the runner makes a fresh tenant, builds the fixture from the parameters, lets a scripted actor reach the goal through the mudcat interfaces, and then compares the observed outcome with the oracle. A driver reports each check by a part of its text in tasks.yaml; a check that applies to the variant and that no driver evaluated counts as a failure. The actor is scripted, not an AI agent; the evals with an agent as actor are still to do.
 
+## What the evals do not detect
+
+A probe seeded ten defects, one at a time, into mechanisms that the design calls necessary, and ran the 280 variants and the scenario tests against each. The variants detected five. The scenario tests detected three more (a subscription that gets every event of the tenant, a prefix credential for the whole bucket, a commit that moves a tag ref). Two defects passed everything:
+
+- **A Merkle hash that is a constant.** Checks compare the hash of a snapshot before and after an operation. No check computes the hash again from the members (ID-5).
+- **Events out of commit order.** The rule of the architecture document for the relay was put back. In three runs of the variants and one run of the scenario tests, no check detected it. One full-scale run detected it earlier, by chance, under load from other processes. The order of events needs a test with fixed interleavings of transactions, not a load test.
+
+Other weak points that the probe showed: compartments are checked in one template only (T4.2); the check "the content is in the retention compartment" of T3.2 reads the list of compartments and does not try a read; no fixture puts two ACL roots in one bucket, so INV-15 cannot fail in a variant; and one check of T4.1 (events that come a second time) depends on timing.
+
+The drivers and the checks have the same author as the implementation. They also read and write the database directly in places, not only through the interfaces of mudcat. Both make a pass weaker evidence than its number suggests.
+
 ## Not yet done
+
+- The seeded defects as a permanent gate: each requirement that a task verifies needs one defect that the task detects.
+- A test with fixed interleavings for the order of events, the branch requirement and the fence of a tenant move.
+- Variants that act and observe only through the public interfaces, with a stable ID for each check.
 
 - Random sequences of actions with the invariants as the only checks.
 - Tasks with a measured result: time, number of calls, cost. All checks are now true or false.
