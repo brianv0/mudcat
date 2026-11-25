@@ -1,2 +1,4 @@
 evals/generated/
 __pycache__/
+/target/
+evals/results/partial.json
