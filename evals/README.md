@@ -1,12 +1,12 @@
 # mudcat evals
 
-Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the five grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have three layers.
+Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the eight grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have three layers.
 
 | Layer | File | Content |
 |---|---|---|
-| Invariants | [invariants.yaml](invariants.yaml) | 17 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 17 tasks with variation. `generate.py` expands them into 300 variants |
-| Reference scenarios | [scenarios/](scenarios/) | 31 fixed sequences of actions, which show one possible path through a task |
+| Invariants | [invariants.yaml](invariants.yaml) | 21 statements that are true after each step of each eval |
+| Task templates | [tasks.yaml](tasks.yaml) | 32 tasks with variation. `generate.py` expands them into 527 variants |
+| Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
 
 Run `python3 evals/check.py` from the repository root. It validates the three layers, and prints the coverage and the gaps.
 
@@ -62,7 +62,6 @@ These rules make a task effective:
 | T1.1 resolve-and-read | Get the data of a dataset for a training job | structure, storage mode, invalidated members | number of members | 30 |
 | T1.2 concurrent-commits | Many writers change one branch, and no change is lost | kind of change, overlap of members | number of writers | 7 |
 | T1.3 stage-near-compute | Have a verified copy near the cluster, then resolve there | fault in the transfer, place option | kind of target, number of members | 12 |
-| T1.4 end-of-lifetime | Remove the bytes of intermediates and caches, and lose no lineage | lifetime class, event, lock | number of runs | 10 |
 | T2.1 combine-methods | Publish one dataset from two | methods, declared equivalence, step | | 8 |
 | T2.2 leakage-check | Find out if test data is related to training inputs | criterion, number of related elements | | 12 |
 | T2.3 reproduce-later | Get the training inputs again after one year | change since the first resolution | | 7 |
@@ -75,9 +74,25 @@ These rules make a task effective:
 | T5.2 embargo | Read a dataset that has an embargo date | time, actor, data in a DOI snapshot or not | | 12 |
 | T5.3 membership-source | Access follows the membership of an outside team | event, kind of grant | kind of request | 9 |
 | T5.4 tenant-move | Move a tenant to its own database | fault, consumer, writes during the move | number of versions | 8 |
-| T5.5 discovered-data | Find and use data that nobody registered | origin of the entry, kind of request | number of files | 10 |
+| T6.1 group-discovered-paths | See one logical dataset for files that nobody registered | pattern of the paths, grouping rules, checksums | number of files | 17 |
+| T6.2 find-unregistered | Find a dataset of another team with no help from that team | what the user knows, who described it, access | | 16 |
+| T6.3 audit-by-field | List each dataset that contains a sensitive field | kind of evidence, propagation of the tag | | 8 |
+| T6.4 upstream-problem | Find the cause upstream and the users downstream | cause, path, capture mode | | 18 |
+| T6.5 watch-a-dataset | Get an alert when a dataset changes in a way that nobody expected | change, severity, step | | 20 |
+| T6.6 discovered-data | Find and use data that nobody registered | origin of the entry, kind of request | number of files | 10 |
+| T7.1 run-view | Get the data, the checks and the code that made one model | history of the pipeline, state of the model | capture mode | 7 |
+| T7.2 rolling-window | Train each day on the last days of data, with no copy | change after the last run, request | | 8 |
+| T7.3 validation-gate | Stop a run before training when its input fails a check | state of the data, option of the request | | 8 |
+| T7.4 end-of-lifetime | Remove the bytes of intermediates and caches, and lose no lineage | lifetime class, event, lock | number of runs | 10 |
+| T7.5 never-deployed | Find the runs and the data that led to nothing | use of the model, age, protection, lifetime class | | 32 |
+| T7.6 bad-input | Find each run, model and deployment that used a bad input | time of the finding, path, action | | 14 |
+| T8.1 publish-a-description | Make a dataset public for dataset search engines | name, description text, licence, audience | | 24 |
+| T8.2 correct-and-cite | Publish a correction and keep old citations correct | kind of change, kind of citation | | 8 |
+| T8.3 copy-or-based-on | State how a dataset relates to its origin | real relation, origin, statement of the owner | | 20 |
+| T8.4 import-and-train | Train on a public dataset together with own data | licence, purpose, reach of the files | format of the description | 17 |
+| T8.5 the-original-changes | Know when a public dataset changed or went away | state of the original, use in the tenant | | 10 |
 
-Variants for each use case: 59, 27, 120, 27 and 67.
+Variants for each use case: 49, 27, 120, 27, 57, 89, 79 and 79.
 
 `generate.py` has these options:
 
@@ -105,6 +120,9 @@ A scenario is one fixed sequence: a start state, steps with an actor and an acti
 | [uc3-rights-removal.yaml](scenarios/uc3-rights-removal.yaml) | 3. Rights and removal for training content | 7 |
 | [uc4-retrieval.yaml](scenarios/uc4-retrieval.yaml) | 4. Governed retrieval for assistants | 6 |
 | [uc5-facility.yaml](scenarios/uc5-facility.yaml) | 5. A shared facility with many small groups | 6 |
+| [uc6-unregistered.yaml](scenarios/uc6-unregistered.yaml) | 6. A catalog of data that nobody registered | 3 |
+| [uc7-pipelines.yaml](scenarios/uc7-pipelines.yaml) | 7. Continuous training pipelines | 3 |
+| [uc8-public.yaml](scenarios/uc8-public.yaml) | 8. Datasets in the public ecosystem | 3 |
 
 ```yaml
 - id: UC1-01                 # use case and number
@@ -137,6 +155,7 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
 | Use | `resolve`, `read`, `record_run`, `publish_model`, `evaluate`, `check_leakage` |
 | Find | `search`, `query`, `lineage`, `report` |
 | Stream | `subscribe`, `backfill`, `poll` |
+| Discovery, lifetime and publication | `discover`, `claim`, `set_expectation`, `deploy`, `describe`, `make_public`, `import_description` |
 | Simulation | `time_passes`, `fault` |
 
 ## What the evals show about the design
@@ -147,7 +166,11 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A legal hold blocks purge and erasure, but not invalidation.
   - A resolution with a strict place option fails when the copy near the cluster is not complete.
   - A summary of training content states which runs have no resolution.
-- The tasks and the invariants cover 70 of the 148 requirements. Requirements for performance and for federation have no task yet.
+  - mudcat sets `sameAs` between two datasets only when their content hashes are equal, and refuses a statement of a person that says otherwise.
+  - A request for own data and public data together is refused completely when the terms of the public data do not permit it.
+  - A person with no access to a discovered dataset does not find it in a search. Goods showed the metadata of each dataset to each engineer.
+  - When the content of a public dataset changes with no new version, mudcat keeps the old checksums and makes new versions.
+- The tasks and the invariants cover 99 of the 155 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 

@@ -80,6 +80,8 @@ Identifier prefixes:
 | ST-19 | When an enricher cannot decide between values of an attribute, mudcat shall store each candidate value with its score. | Inference on data that does not describe itself is not certain; Goods keeps each candidate schema with a score. | T |
 | ST-20 | mudcat shall mark as propagated each metadata value that it shows for an entity that no enricher examined. | Users must tell a value that came from analysis of the entity from a value that came from other members of its dataset. | T |
 | ST-21 | mudcat shall record, for each entity and each enricher, the time, the result and the error of the last run. | Enrichers coordinate through these records, and operators find failures with them; Goods uses the same mechanism. | T |
+| ST-22 | mudcat shall test each expectation of a dataset on each new snapshot of that dataset, with the statistics of the snapshot only. | Owners must know when data changes in a way that nobody expected, and the test must not have the cost of a read of the data; Goods and production ML pipelines both have this function. | T |
+| ST-23 | mudcat shall refuse to publish a snapshot that fails an expectation of the severity block. | A publication is a statement to other teams that the data is good. | T |
 
 ## Provenance
 
@@ -146,6 +148,7 @@ Identifier prefixes:
 | RD-7 | mudcat shall return, with each task of a resolution plan, the expected bytes, the expected number of elements and the replica location. | Compute engines need these values to size and place their tasks. | T |
 | RD-8 | mudcat shall provide read and write connectors for Ray Data that pass the run token of the job. | Lineage must come from the jobs that use the data, without extra code in each job. | D |
 | RD-9 | mudcat shall not resolve data for a caller in a location that the jurisdiction rules of that data do not permit. | Rules for the export of data also cover access from another country to data that stays in place; see grounding use case 1. | T |
+| RD-10 | When a request asks for snapshots with no failed expectation, mudcat shall refuse to resolve a snapshot that has a failed expectation. | A pipeline must be able to stop before training when its input fails a check; production ML pipelines have this step. | T |
 
 ## Placement and federation
 
@@ -176,6 +179,7 @@ Identifier prefixes:
 | IN-10 | mudcat shall report, for each description, the properties that the description lacks for each conformance level. | Owners must know what to add before they publish. | T |
 | IN-11 | mudcat shall serve a landing page with the JSON-LD description for each public dataset, and a sitemap of these pages. | Search engines find dataset descriptions through landing pages and sitemaps. | D |
 | IN-12 | mudcat shall import a Schema.org, DCAT or Croissant description as a dataset on a reference storage resource. | The public datasets that a team uses must be in the same catalog and the same lineage as its own data. | T |
+| IN-13 | mudcat shall generate each description with the permissions of the reader of that description. | A public description must not show what the catalog does not show to an anonymous reader. | T |
 
 ## Change stream and search
 
@@ -195,6 +199,7 @@ Identifier prefixes:
 | EV-12 | mudcat shall return, in pages, the members that one snapshot added and removed in comparison with another snapshot of the same dataset. | Consumers of snapshot events need the complete list of changes, and one event cannot hold millions of members. | T |
 | EV-13 | mudcat shall assign the positions of events in the order of their commits. | A number that the database assigns at insert time is not in commit order, and a consumer can then miss an event. | T |
 | EV-14 | mudcat shall record the commit of each change to mutable state, and resolve "as of" a time to the last commit at or before that time. | Wall-clock times of transactions that overlap do not give a correct order. | T |
+| EV-15 | mudcat shall publish an event for each expectation result that is a failure. | Owners and the users downstream get their alerts from the change stream. | T |
 
 ## Operation and deployment
 
@@ -246,3 +251,5 @@ Each of these queries shall be possible as one request to mudcat. The verificati
 | QY-8 | mudcat shall resolve again the training inputs of a given model and report the elements that usage policy now excludes. |
 | QY-9 | mudcat shall list the data that had no resolution and no onward use in a given period, with its size, its sources and the duties that apply. |
 | QY-10 | mudcat shall report, for a given snapshot, the number of resolutions for each action and the time of the last resolution. |
+| QY-11 | mudcat shall list the datasets, the models and the deployments that derive from a given version, with the owner of each. |
+| QY-12 | mudcat shall list each dataset whose structure contains a given field, or whose inferred structure has that field as a candidate, with the score of each candidate. |

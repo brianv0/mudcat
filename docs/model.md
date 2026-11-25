@@ -417,6 +417,20 @@ Four rules keep statistics safe to use:
 
 Hints inherit down collections, as tags do.
 
+**Expectations** (`mc:Expectation`) are conditions that an owner declares on a dataset. mudcat tests them on each new snapshot, from statistics only. It reads no data to do this. Examples:
+
+- the number of members is within 20% of the number in the snapshot before;
+- the fields are the same as in the declared structure;
+- a field has no empty values;
+- the distribution of a field is not far from its distribution in the snapshot before.
+
+Each test gives an **expectation result** on the snapshot, and a failure also gives an event in the change stream. An expectation has a severity:
+
+- `warn`: mudcat records the failure and sends the event.
+- `block`: mudcat also refuses to publish the snapshot.
+
+A request for resolution can ask for snapshots with no failure only. mudcat can propose an expectation from the history of a dataset, for example a range for the size when the size grew by the same part each day. Goods has the same function, and pipelines for production ML have a validation step that stops a run when its data fails.
+
 ### Lifetime and use
 
 Not all data is kept for the same time. In Google's Goods catalog, more than 5% of the entries were removed each day and as many were added. Most of them were intermediate results. A study of 3000 production ML pipelines at Google found that about 80% of the trained models were never deployed.
@@ -440,7 +454,7 @@ The rules:
 
 - the number of resolutions for each action, and the time of the last one;
 - the activities that used it, and their outputs;
-- **onward use:** if some output of those activities was itself used or deployed. mudcat follows this chain to its end.
+- **onward use:** if a chain of uses from it reaches a deployment, a published snapshot, or an activity of a different pipeline. A use in the same run of the same pipeline, such as the evaluation of a model that the run trained, is not onward use.
 
 A **deployment** (`mc:Deployment`, subclass of `prov:Activity`) records that a model version went into service outside the pipeline that made it. Without this record, mudcat cannot tell a model that serves users from a model that nobody used.
 
@@ -486,6 +500,7 @@ The rules:
 - **Text limits.** Search engines use only the first 5000 characters of a text property. mudcat rejects a longer text in the `describe` namespace.
 - **One description, many forms.** mudcat serves the same description as JSON-LD in the landing page of the dataset, as a DCAT record, as a Croissant file and as a DataCite record.
 - **Copies and derivations.** A copy of a dataset that another catalog publishes has `sameAs` with the canonical address of the original. A dataset that changes or combines other datasets has `isBasedOn`. Google's guidelines separate these two cases in the same way.
+- **The description of a published snapshot does not change.** A person corrects the descriptive attributes on the dataset. The correction is in the description of the dataset and of each later snapshot. The description of a snapshot that is already published stays as it was.
 - **Only what the reader can see.** mudcat generates a description with the permissions of the reader. A public description contains only what an anonymous reader can see.
 - **Import.** mudcat also reads the three vocabularies. A description from another repository becomes a dataset on a `reference` storage resource. Its payloads have the assertion origin `imported`, and its source is an `mc:ExternalSource`. Thus the public datasets that a team uses are in the same catalog and the same lineage as its own data.
 - **Limits of Schema.org.** Schema.org has no structure below the file, no immutable versions and little provenance. Google's guidelines call their own advice on provenance and versions an initial outline. Croissant 1.1 adds PROV-O relations and ODRL offers. mudcat thus puts a summary in the Schema.org form, and the full record in the DCAT and Croissant forms.

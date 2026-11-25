@@ -142,55 +142,6 @@
   verifies: [PL-1, PL-2, RD-4, QY-4]
   reference: UC1-03
 
-- id: T1.4
-  use_case: 1
-  name: end-of-lifetime
-  goal: Keep storage small. Remove the bytes of intermediates and caches of a curation pipeline, and lose no lineage.
-  axes:
-    class: [intermediate, cache]
-    event: [lifetime-ends, input-invalidated]
-    lock: [none, replication-rule]
-  cover:
-    runs: [1, 500]
-  fixture: >
-    A pipeline made {runs} runs. Each run made a durable output from a durable input, through an
-    artifact of the lifetime class {class}. Lock on that artifact: {lock}. Then the event {event} occurs.
-  distractors:
-    - A durable artifact in the same collection has the same age and no lock.
-  oracle:
-    - if: {event: input-invalidated}
-      then: {outcome: invalidated-with-input}
-    - if: {lock: replication-rule}
-      then: {outcome: kept}
-    - else: {outcome: bytes-purged-stub-kept}
-  checks:
-    - check: The durable artifact in the same collection has its bytes and resolves as before.
-    - check: A lineage query from the durable output returns the durable input, through the artifact of the class {class}.
-    - outcome: bytes-purged-stub-kept
-      check: Each replica of the artifact has a deletion receipt.
-    - outcome: bytes-purged-stub-kept
-      check: The catalog record has the ID, the content checksum, the size and the statistics of the artifact.
-    - outcome: bytes-purged-stub-kept
-      check: A resolution of the artifact fails with an error that states that the lifetime ended.
-    - outcome: bytes-purged-stub-kept
-      when: {class: cache}
-      check: A new request for the same representation makes it again, and the new copy has the same content checksum.
-    - outcome: bytes-purged-stub-kept
-      when: {class: intermediate}
-      check: mudcat does not run the pipeline again to make the artifact.
-    - outcome: kept
-      check: The bytes exist, and the answer to a purge request names the replication rule.
-    - outcome: invalidated-with-input
-      check: The artifact does not resolve for a normal user, and its invalidation record names the input.
-    - outcome: invalidated-with-input
-      when: {lock: replication-rule}
-      check: The replication rule does not stop the invalidation.
-    - outcome: invalidated-with-input
-      check: The durable output has a flag with the number of affected elements.
-  invariants: [INV-3, INV-10, INV-17]
-  verifies: [PR-8, PL-7, UP-17, UP-9]
-  reference: UC1-03
-
 # ---------------------------------------------------------------- use case 2
 
 - id: T2.1
@@ -361,6 +312,7 @@
     Legal hold on the content: {hold}. The removal happens {point}. The actor asks for the level {level}.
   distractors:
     - Other content from the same source, which the request does not name, is in the same two snapshots.
+    - Training shards with the lifetime class cache derive from the content.
   oracle:
     - if: {level: [remove-from-dataset, delete-marker]}
       then: {outcome: forward-only}
@@ -391,6 +343,8 @@
     - outcome: [excluded, bytes-gone, record-gone, blocked-by-hold]
       when: {point: after-training}
       check: The model has a flag with the number of affected elements. mudcat did not change the model.
+    - outcome: [excluded, bytes-gone, record-gone]
+      check: The training shards that derive from the content have the same state as the content.
     - outcome: bytes-gone
       check: Each replica has a deletion receipt, and the catalog record of the content stays.
     - outcome: [bytes-gone, record-gone]
@@ -403,7 +357,7 @@
     - outcome: blocked-by-hold
       check: The content is in the retention compartment.
   invariants: [INV-2, INV-3, INV-10, INV-12]
-  verifies: [UP-7, UP-8, UP-9, UP-10, UP-11, EV-7, QY-8]
+  verifies: [UP-7, UP-8, UP-9, UP-10, UP-11, UP-17, EV-7, QY-8]
   reference: UC3-03
 
 - id: T3.3
@@ -678,8 +632,231 @@
   verifies: [OP-7, OP-13, OP-14, ID-12, EV-13]
   reference: UC5-05
 
-- id: T5.5
-  use_case: 5
+# ---------------------------------------------------------------- use case 6
+
+- id: T6.1
+  use_case: 6
+  name: group-discovered-paths
+  goal: See one logical dataset for the files of a pipeline that nobody registered.
+  axes:
+    pattern: [dated-directories, version-labels, shard-indexes, copies-at-two-sites, no-pattern]
+    rules: [rules-set, no-rules]
+    checksums: [agree, differ]
+  cover:
+    files: [60, 600000]
+  exclude:
+    - {pattern: [dated-directories, version-labels, shard-indexes, no-pattern], checksums: differ}
+  fixture: >
+    An external storage resource with discovery on holds {files} files that nobody registered. Their
+    paths have the pattern {pattern}. Grouping rules of the storage resource: {rules}. The checksums of
+    files with the same name at different sites {checksums}.
+  oracle:
+    - if: {rules: no-rules}
+      then: {outcome: one-artifact-for-each-file}
+    - if: {pattern: no-pattern}
+      then: {outcome: one-artifact-for-each-file}
+    - if: {pattern: dated-directories}
+      then: {outcome: one-dataset-with-members}
+    - if: {pattern: version-labels}
+      then: {outcome: one-artifact-with-versions}
+    - if: {pattern: shard-indexes}
+      then: {outcome: one-artifact-with-parts}
+    - if: {pattern: copies-at-two-sites, checksums: agree}
+      then: {outcome: one-version-with-replicas}
+    - else: {outcome: two-artifacts-with-a-flag}
+  checks:
+    - check: Each of the {files} files is in the catalog one time.
+    - check: A second discovery of the same storage makes no new entry and no event.
+    - check: Each artifact records that a site agent discovered it.
+    - outcome: one-artifact-for-each-file
+      check: The path of each file is an identifier, and a search for a part of the path finds the file.
+    - outcome: one-dataset-with-members
+      check: The discovered dataset has one member for each date.
+    - outcome: one-dataset-with-members
+      check: A file of the next day becomes a member of the same dataset, and the dataset keeps its ID.
+    - outcome: one-artifact-with-versions
+      check: The artifact has one version for each label, in the order of the labels, and latest names the newest.
+    - outcome: one-artifact-with-parts
+      check: The artifact has one version whose parts are the shards. mudcat reports a shard index that is absent.
+    - outcome: one-version-with-replicas
+      check: The version has one replica at each site, and each replica has the state verified.
+    - outcome: two-artifacts-with-a-flag
+      check: mudcat makes two artifacts and no second replica. A flag states that the two files have the same name and different content.
+  invariants: [INV-8, INV-19, INV-21]
+  verifies: [PL-8, ST-18, OP-5, ID-4]
+  reference: UC6-01
+
+- id: T6.2
+  use_case: 6
+  name: find-unregistered
+  goal: Find a dataset that another team made, with no help from that team.
+  axes:
+    known: [part-of-its-path, name-of-a-field, owner-team, job-that-reads-it]
+    described: [by-enrichers-only, by-its-owner]
+    access: [reader, no-access]
+  fixture: >
+    A discovered dataset of another team. A user looks for it and knows only this fact: {known}. The
+    metadata of the dataset is {described}. Access of the user to the dataset: {access}.
+  distractors:
+    - A third team derived a copy of the dataset with fewer fields. The copy matches the same search words.
+    - A dataset with the path a/y/x/b exists.
+  oracle:
+    - if: {access: no-access}
+      then: {outcome: hidden}
+    - else: {outcome: found}
+  checks:
+    - outcome: found
+      check: The dataset is in the first ten results.
+    - outcome: found
+      check: The dataset is above the copy that the third team derived from it.
+    - outcome: found
+      when: {described: by-its-owner}
+      check: The dataset is above each result that has no description from a person.
+    - outcome: found
+      when: {described: by-enrichers-only}
+      check: The result shows which values an enricher computed and which values are propagated.
+    - outcome: found
+      when: {known: part-of-its-path}
+      check: A search for x/y finds the path a/x/y/b and does not find the path a/y/x/b.
+    - outcome: found
+      when: {known: name-of-a-field}
+      check: The match comes from the structure of the dataset, which an enricher inferred.
+    - outcome: found
+      when: {known: owner-team}
+      check: A filter on the team gives only datasets of that team.
+    - outcome: found
+      when: {known: job-that-reads-it}
+      check: The match comes from a provenance relation that has the mark inferred.
+    - outcome: hidden
+      check: The results do not contain the dataset, and no number in the answer includes it.
+  invariants: [INV-3, INV-6]
+  verifies: [EV-9, EV-10, EV-11, ST-20, PR-12]
+  reference: UC6-02
+
+- id: T6.3
+  use_case: 6
+  name: audit-by-field
+  goal: List each dataset that contains a sensitive field, for an audit.
+  axes:
+    evidence: [declared-structure, inferred-and-certain, inferred-candidate, derived-copy-with-a-new-field-name]
+    tag: [propagates, does-not-propagate]
+  fixture: >
+    One declared dataset has a field with personal data, and a sensitivity tag on it. A second dataset
+    contains the same data. The evidence for this in the catalog is {evidence}. The tag {tag} along
+    derivation. An auditor asks for each dataset that contains the field.
+  distractors:
+    - A dataset in a different tenant contains the same field.
+    - A dataset has a field with the same name and a different meaning. A person marked it as not sensitive.
+  oracle:
+    - if: {evidence: [declared-structure, inferred-and-certain]}
+      then: {outcome: listed}
+    - if: {evidence: inferred-candidate}
+      then: {outcome: listed-as-candidate}
+    - if: {evidence: derived-copy-with-a-new-field-name, tag: propagates}
+      then: {outcome: listed-through-the-tag}
+    - else: {outcome: not-listed-and-limit-stated}
+  checks:
+    - check: The dataset in the different tenant is not in the answer.
+    - check: The dataset whose field a person marked as not sensitive is not in the list of findings.
+    - outcome: listed
+      check: The list has the second dataset, with its owner and its storage resources.
+    - outcome: listed
+      when: {evidence: inferred-and-certain}
+      check: The entry names the enricher and its version.
+    - outcome: listed-as-candidate
+      check: The entry has the score of the candidate and the mark not confirmed.
+    - outcome: listed-through-the-tag
+      check: The entry names the derivation that carried the tag.
+    - outcome: not-listed-and-limit-stated
+      check: The answer states that the tag does not propagate, and that the audit did not examine derived data.
+    - when: {tag: propagates, evidence: [declared-structure, inferred-and-certain, inferred-candidate]}
+      check: The answer also lists each dataset that derives from the second dataset.
+  invariants: [INV-6]
+  verifies: [QY-12, ST-14, ST-17, ST-19, OP-8]
+  reference: UC6-02
+
+- id: T6.4
+  use_case: 6
+  name: upstream-problem
+  goal: A dataset has wrong values. Find the cause upstream, and find the users downstream.
+  axes:
+    cause: [upstream-lost-a-field, upstream-size-fell, no-change-upstream]
+    path: [direct, through-a-purged-intermediate, through-another-team]
+    capture: [observed, inferred-from-logs]
+  fixture: >
+    A dataset has wrong values from today. State of the dataset upstream: {cause}. The dataset derives
+    from the upstream dataset {path}. mudcat got the provenance relations in the mode {capture}. An
+    engineer asks for the cause, and for each user downstream of the upstream dataset.
+  distractors:
+    - The dataset also uses a configuration file that each pipeline of the organisation uses.
+  oracle:
+    - if: {cause: no-change-upstream}
+      then: {outcome: no-cause-upstream}
+    - else: {outcome: cause-found}
+  checks:
+    - check: The configuration file is not in the answer.
+    - outcome: cause-found
+      check: The answer names the upstream snapshot that changed, and the change.
+    - outcome: cause-found
+      check: The answer lists each dataset and each model downstream of that snapshot, with the owner of each.
+    - outcome: cause-found
+      when: {path: through-a-purged-intermediate}
+      check: The path in the answer contains the stub of the intermediate, with the time of its purge.
+    - outcome: cause-found
+      when: {path: through-another-team}
+      check: The answer names the owner team of each step of the path.
+    - when: {capture: inferred-from-logs}
+      check: Each relation in the answer has the mark inferred.
+    - outcome: no-cause-upstream
+      check: The answer states that no upstream snapshot changed in the period, and names the snapshots that it compared.
+  invariants: [INV-17]
+  verifies: [PR-3, PR-8, PR-12, QY-11]
+  reference: UC6-03
+
+- id: T6.5
+  use_case: 6
+  name: watch-a-dataset
+  goal: Get an alert when a dataset changes in a way that nobody expected.
+  axes:
+    change: [none, grows-as-before, size-falls-by-90-percent, a-field-is-absent, empty-values-appear]
+    severity: [warn, block]
+    step: [commit, publish]
+  fixture: >
+    A dataset has 30 daily snapshots. Each one is about 10% larger than the one before. The owner set
+    expectations for the size, the fields and the empty values, with the severity {severity}. The next
+    snapshot has this change: {change}. The pipeline does the step {step}.
+  oracle:
+    - if: {change: [none, grows-as-before]}
+      then: {outcome: passed}
+    - if: {severity: block, step: publish}
+      then: {outcome: publication-refused}
+    - else: {outcome: alert-sent}
+  checks:
+    - check: mudcat tested the expectations from statistics, with no read of data.
+    - check: The snapshot has one result for each expectation.
+    - outcome: passed
+      check: The change stream has no event for a failure.
+    - outcome: passed
+      when: {change: grows-as-before}
+      check: mudcat does not report the larger size as a failure.
+    - outcome: alert-sent
+      check: The change stream has one event for the failure, with the expectation, the expected range and the value.
+    - outcome: alert-sent
+      when: {step: commit}
+      check: The commit succeeds.
+    - outcome: alert-sent
+      when: {step: publish}
+      check: The snapshot is published, and its record has the failure.
+    - outcome: publication-refused
+      check: The error names the expectation. The snapshot is not published, and the tag ref of the last publication does not move.
+    - outcome: publication-refused
+      check: The change stream has one event for the failure.
+  invariants: [INV-2, INV-5, INV-20]
+  verifies: [ST-22, ST-23, EV-15, EV-1]
+  reference: UC6-03
+
+- id: T6.6
+  use_case: 6
   name: discovered-data
   goal: Find and use data that a group put on its own storage and did not register.
   axes:
@@ -715,6 +892,476 @@
       check: The error states that the source is unknown, and gives the number of versions with no source.
     - outcome: refused-unknown-source
       check: mudcat issues no plan and no credentials, and the audit log has the decision.
-  invariants: [INV-4, INV-9, INV-13, INV-14]
+  invariants: [INV-4, INV-9, INV-14, INV-19, INV-21]
   verifies: [ST-18, ST-20, UP-16, PL-8, OP-5]
-  reference: UC5-01
+  reference: UC6-01
+
+# ---------------------------------------------------------------- use case 7
+
+- id: T7.1
+  use_case: 7
+  name: run-view
+  goal: Get, for one model, exactly the data, the checks and the code that made it.
+  axes:
+    history: [one-run, many-runs-with-shared-inputs, chain-of-warm-starts]
+    model: [in-service, never-deployed]
+  cover:
+    capture: [run-tokens, the-client-sdk, import-of-openlineage-events]
+  fixture: >
+    A pipeline with the history {history}. With many runs, 500 runs each used the last 7 daily spans.
+    With the chain, each model started from the model before. The provenance came through {capture}. A
+    person asks for the run view of the newest model, which is {model}.
+  oracle:
+    - if: {history: chain-of-warm-starts}
+      then: {outcome: view-with-a-border}
+    - else: {outcome: view}
+  checks:
+    - check: The view contains the training activity, its 7 input spans, the validation activities on those spans, the evaluation and the code version.
+    - check: The view contains no activity of a different run.
+    - when: {history: many-runs-with-shared-inputs}
+      check: The number of nodes in the view is the same as for a pipeline with one run.
+    - outcome: view-with-a-border
+      check: The model before is in the view as a border. The view does not contain the inputs of that model.
+    - outcome: view-with-a-border
+      check: The answer states that a request with the base-model role gives the chain.
+    - when: {model: in-service}
+      check: The view contains the deployment, with the service and the time.
+    - when: {model: never-deployed}
+      check: The view contains no deployment, and the use record of the model shows no onward use.
+  invariants: [INV-4]
+  verifies: [PR-3, PR-4, PR-9, PR-10, PR-11]
+  reference: UC7-01
+
+- id: T7.2
+  use_case: 7
+  name: rolling-window
+  goal: Train each day on the last days of data, with no copy of the data.
+  axes:
+    since_yesterday: [nothing-new, a-new-span, an-old-span-corrected, an-old-span-invalidated]
+    request: [the-newest-window, the-window-of-yesterday]
+  fixture: >
+    A dataset with one span for each day. A job trains each day on the last 7 spans. Change after the
+    run of yesterday: {since_yesterday}. The job of today asks for {request}.
+  oracle:
+    - if: {since_yesterday: an-old-span-invalidated}
+      then: {outcome: inputs-less-excluded}
+    - if: {request: the-window-of-yesterday}
+      then: {outcome: same-inputs}
+    - if: {since_yesterday: nothing-new}
+      then: {outcome: same-inputs}
+    - if: {since_yesterday: a-new-span}
+      then: {outcome: window-moved}
+    - else: {outcome: window-with-a-new-version}
+  checks:
+    - check: No input has a new replica. The job made no copy of its input.
+    - check: The resolution of yesterday names the same versions as before.
+    - outcome: same-inputs
+      check: The inputs are the same as the inputs of yesterday, version for version.
+    - outcome: same-inputs
+      when: {since_yesterday: an-old-span-corrected}
+      check: mudcat also reports that one input has a newer version.
+    - outcome: window-moved
+      check: Six spans are the same as yesterday. The new snapshot refers again to the manifests of those six spans.
+    - outcome: window-moved
+      check: mudcat gives the similarity between the input of today and the input of yesterday from statistics, with no read of data.
+    - outcome: window-with-a-new-version
+      check: The corrected span is in the window with its new version, and the answer names the change.
+    - outcome: inputs-less-excluded
+      check: The invalidated span is not in the plan, and the answer gives the number of elements that policy excluded.
+  invariants: [INV-1, INV-2, INV-3, INV-4]
+  verifies: [UP-3, UP-9, ID-13, QY-8]
+  reference: UC7-01
+
+- id: T7.3
+  use_case: 7
+  name: validation-gate
+  goal: Stop a run before training when its input fails a check.
+  axes:
+    data: [as-expected, values-drifted, a-field-is-absent, the-span-is-empty]
+    option: [any-snapshot, only-snapshots-that-passed]
+  fixture: >
+    The newest span of the input of a pipeline is {data}. The dataset has expectations for the
+    distribution of values, the fields and the number of members. The training job resolves the newest
+    snapshot with the option {option}.
+  oracle:
+    - if: {data: as-expected}
+      then: {outcome: resolved}
+    - if: {option: only-snapshots-that-passed}
+      then: {outcome: refused-before-a-read}
+    - else: {outcome: resolved-with-failures-stated}
+  checks:
+    - check: mudcat tested the expectations from statistics, with no read of data.
+    - outcome: resolved
+      check: The resolution records that each expectation passed.
+    - outcome: refused-before-a-read
+      check: mudcat issues no plan and no credentials. The error names the expectation and the snapshot.
+    - outcome: refused-before-a-read
+      check: The answer names the newest snapshot that passed.
+    - outcome: resolved-with-failures-stated
+      check: The resolution records each failure, and the run view of the model shows it later.
+    - when: {data: the-span-is-empty}
+      check: The result for the number of members is a failure, and the result for the fields is not.
+  invariants: [INV-4, INV-20]
+  verifies: [ST-22, EV-15, RD-10, UP-3]
+  reference: UC7-02
+
+- id: T7.4
+  use_case: 7
+  name: end-of-lifetime
+  goal: Keep storage small. Remove the bytes of intermediates and caches of a curation pipeline, and lose no lineage.
+  axes:
+    class: [intermediate, cache]
+    event: [lifetime-ends, input-invalidated]
+    lock: [none, replication-rule]
+  cover:
+    runs: [1, 500]
+  fixture: >
+    A pipeline made {runs} runs. Each run made a durable output from a durable input, through an
+    artifact of the lifetime class {class}. Lock on that artifact: {lock}. Then the event {event} occurs.
+  distractors:
+    - A durable artifact in the same collection has the same age and no lock.
+  oracle:
+    - if: {event: input-invalidated}
+      then: {outcome: invalidated-with-input}
+    - if: {lock: replication-rule}
+      then: {outcome: kept}
+    - else: {outcome: bytes-purged-stub-kept}
+  checks:
+    - check: The durable artifact in the same collection has its bytes and resolves as before.
+    - check: A lineage query from the durable output returns the durable input, through the artifact of the class {class}.
+    - outcome: bytes-purged-stub-kept
+      check: Each replica of the artifact has a deletion receipt.
+    - outcome: bytes-purged-stub-kept
+      check: The catalog record has the ID, the content checksum, the size and the statistics of the artifact.
+    - outcome: bytes-purged-stub-kept
+      check: A resolution of the artifact fails with an error that states that the lifetime ended.
+    - outcome: bytes-purged-stub-kept
+      when: {class: cache}
+      check: A new request for the same representation makes it again, and the new copy has the same content checksum.
+    - outcome: bytes-purged-stub-kept
+      when: {class: intermediate}
+      check: mudcat does not run the pipeline again to make the artifact.
+    - outcome: kept
+      check: The bytes exist, and the answer to a purge request names the replication rule.
+    - outcome: invalidated-with-input
+      check: The artifact does not resolve for a normal user, and its invalidation record names the input.
+    - outcome: invalidated-with-input
+      when: {lock: replication-rule}
+      check: The replication rule does not stop the invalidation.
+    - outcome: invalidated-with-input
+      check: The durable output has a flag with the number of affected elements.
+  invariants: [INV-3, INV-10, INV-17]
+  verifies: [PR-8, PL-7, UP-17, UP-9]
+  reference: UC7-03
+
+- id: T7.5
+  use_case: 7
+  name: never-deployed
+  goal: Find the runs and the data that led to nothing, and remove what can go.
+  axes:
+    use: [deployed, start-point-of-a-deployed-model, evaluated-in-its-own-run-only, no-use]
+    age: [inside-the-period, past-the-period]
+    protection: [none, legal-hold]
+    kind: [cache, durable]
+  fixture: >
+    A training set of the lifetime class {kind}, and the model that one run trained on it. Use of the
+    model: {use}. The last use was {age} that the tenant set for abandoned data. Protection of the
+    training set: {protection}. A retention rule for abandoned data is active. An operator asks for the
+    abandoned data.
+  oracle:
+    - if: {use: [deployed, start-point-of-a-deployed-model]}
+      then: {outcome: in-use}
+    - if: {protection: legal-hold}
+      then: {outcome: protected}
+    - if: {age: inside-the-period}
+      then: {outcome: not-yet}
+    - else: {outcome: abandoned}
+  checks:
+    - outcome: in-use
+      check: The training set is not in the list. Its use record names the deployment that the chain of uses reaches.
+    - outcome: in-use
+      when: {use: start-point-of-a-deployed-model}
+      check: The chain goes through the later model.
+    - outcome: protected
+      check: The training set is not in the list of abandoned data. The bytes exist, and the answer names the hold.
+    - outcome: not-yet
+      check: The training set is not in the list.
+    - outcome: abandoned
+      check: The training set is in the list, with its size, its storage resources, its sources and the duties that apply.
+    - outcome: abandoned
+      when: {use: evaluated-in-its-own-run-only}
+      check: The evaluation in the same run does not count as onward use.
+    - outcome: abandoned
+      when: {kind: cache}
+      check: The retention rule purged the bytes. The stub and one deletion receipt for each replica exist.
+    - outcome: abandoned
+      when: {kind: durable}
+      check: The bytes exist. The list asks for the decision of a person.
+  invariants: [INV-10, INV-12, INV-17]
+  verifies: [QY-9, QY-10, PR-9, PL-7, UP-8]
+  reference: UC7-03
+
+- id: T7.6
+  use_case: 7
+  name: bad-input
+  goal: An input was bad. Find each run, model and deployment that used it.
+  axes:
+    found: [before-any-use, after-training, after-deployment]
+    path: [direct, through-a-purged-intermediate, through-a-warm-start]
+    action: [report-only, invalidate]
+  exclude:
+    - {found: before-any-use, path: [through-a-purged-intermediate, through-a-warm-start]}
+  fixture: >
+    One daily span of input has bad values. A person finds this {found}. The models that used the span
+    used it {path}. The person asks for each run, model and deployment that used the span, and then does
+    this action: {action}.
+  oracle:
+    - if: {found: before-any-use}
+      then: {outcome: nothing-affected}
+    - if: {path: through-a-warm-start}
+      then: {outcome: listed-when-the-role-is-included}
+    - if: {found: after-training}
+      then: {outcome: models-listed}
+    - else: {outcome: deployments-listed}
+  checks:
+    - outcome: nothing-affected
+      check: The list is empty.
+    - outcome: nothing-affected
+      when: {action: invalidate}
+      check: The next resolution of the window does not contain the span.
+    - outcome: models-listed
+      check: The list has each run and each model, with the number of elements from the span, and no deployment.
+    - outcome: deployments-listed
+      check: The list also has each deployment, with its service and its owner.
+    - outcome: [models-listed, deployments-listed]
+      when: {path: through-a-purged-intermediate}
+      check: The list is complete, although the intermediate has no bytes.
+    - outcome: listed-when-the-role-is-included
+      check: The default answer lists the first model only, and states that it did not follow the base-model role.
+    - outcome: listed-when-the-role-is-included
+      check: A request that includes the base-model role lists each later model.
+    - outcome: [models-listed, deployments-listed, listed-when-the-role-is-included]
+      when: {action: invalidate}
+      check: Each listed model has a flag with the number of affected elements. mudcat changed no model and no deployment.
+    - outcome: [models-listed, deployments-listed, listed-when-the-role-is-included]
+      when: {action: report-only}
+      check: No model has a flag, and the span resolves as before.
+  invariants: [INV-3, INV-17]
+  verifies: [QY-11, PR-3, PR-8, UP-9]
+  reference: UC7-02
+
+# ---------------------------------------------------------------- use case 8
+
+- id: T8.1
+  use_case: 8
+  name: publish-a-description
+  goal: Make a dataset public, so that a dataset search engine can find it.
+  axes:
+    name: [present, absent]
+    text: [absent, of-20-characters, of-300-characters]
+    licence: [stated, absent]
+    audience: [public, the-tenant-only]
+  fixture: >
+    A snapshot with a creator, a landing page and a date. In the describe namespace, the name is {name},
+    the description text is {text} and the licence is {licence}. The owner publishes the snapshot for
+    the audience {audience}.
+  oracle:
+    - if: {audience: the-tenant-only}
+      then: {outcome: published-with-a-report}
+    - if: {name: absent}
+      then: {outcome: refused}
+    - if: {text: [absent, of-20-characters]}
+      then: {outcome: refused}
+    - if: {licence: absent}
+      then: {outcome: public-at-the-level-search}
+    - else: {outcome: public-at-the-level-croissant}
+  checks:
+    - outcome: published-with-a-report
+      check: The snapshot is published in the tenant. The report lists the properties that it lacks for each level.
+    - outcome: published-with-a-report
+      check: mudcat serves no public landing page for the snapshot.
+    - outcome: refused
+      check: The error names each property that is absent or too short. The snapshot is not public.
+    - outcome: [public-at-the-level-search, public-at-the-level-croissant]
+      check: The landing page has a JSON-LD description with the name, the description, the address, the version, the identifier and one distribution with an address and a format.
+    - outcome: [public-at-the-level-search, public-at-the-level-croissant]
+      check: The sitemap has the landing page.
+    - outcome: [public-at-the-level-search, public-at-the-level-croissant]
+      check: The description contains nothing that an anonymous reader cannot see.
+    - outcome: public-at-the-level-search
+      check: The report states that the licence is absent, and mudcat serves no Croissant file.
+    - outcome: public-at-the-level-croissant
+      check: The Croissant file states the version of the specification, and has each file with its checksum and the record sets of the structure.
+  invariants: [INV-18]
+  verifies: [IN-4, IN-8, IN-9, IN-10, IN-11, IN-13]
+  reference: UC8-01
+
+- id: T8.2
+  use_case: 8
+  name: correct-and-cite
+  goal: Publish a correction, and keep each citation of the old version correct.
+  axes:
+    change: [a-new-snapshot, a-corrected-text, withdrawal-of-the-old-snapshot, invalidation-of-a-member]
+    citation: [the-doi-of-the-old-snapshot, the-landing-page-of-the-dataset]
+  fixture: >
+    A public dataset with one published snapshot that has a DOI. A paper cites the data by {citation}.
+    Then this change occurs: {change}. A reader follows the citation.
+  oracle:
+    - if: {change: a-new-snapshot, citation: the-doi-of-the-old-snapshot}
+      then: {outcome: old-snapshot-shown}
+    - if: {change: a-new-snapshot}
+      then: {outcome: newest-shown-with-a-link-to-the-old}
+    - if: {change: a-corrected-text, citation: the-doi-of-the-old-snapshot}
+      then: {outcome: old-text-kept}
+    - if: {change: a-corrected-text}
+      then: {outcome: new-text-shown}
+    - if: {change: withdrawal-of-the-old-snapshot}
+      then: {outcome: withdrawal-shown}
+    - else: {outcome: shown-with-an-exclusion}
+  checks:
+    - check: The Merkle hash of the old snapshot is the same as before the change.
+    - outcome: old-snapshot-shown
+      check: The DOI leads to the description of the old snapshot. That description names the newer version.
+    - outcome: newest-shown-with-a-link-to-the-old
+      check: The page shows the new snapshot, with its version and a link to the version before.
+    - outcome: old-text-kept
+      check: The description of the published snapshot is the same as before.
+    - outcome: new-text-shown
+      check: The page shows the corrected text and a new date of modification. The description of the published snapshot is the same as before.
+    - outcome: withdrawal-shown
+      check: The page exists. It states the withdrawal, its date and its reason, and it has no distribution.
+    - outcome: shown-with-an-exclusion
+      check: The description states that mudcat excludes some members. A resolution of the snapshot does not contain the invalidated member.
+  invariants: [INV-2, INV-3]
+  verifies: [ID-2, ID-3, ID-8, IN-8, UP-9, UP-10]
+  reference: UC8-01
+
+- id: T8.3
+  use_case: 8
+  name: copy-or-based-on
+  goal: State correctly how a dataset relates to the dataset that it came from.
+  axes:
+    relation: [the-same-content, a-subset, changed-values, a-combination-of-two, no-relation]
+    origin: [own-dataset, imported-public-dataset]
+    statement: [none, the-owner-says-it-is-a-copy]
+  fixture: >
+    A new dataset. Its real relation to an earlier dataset is {relation}. The earlier dataset is an
+    {origin}. Statement of the owner about the relation: {statement}. The owner publishes the new
+    dataset.
+  oracle:
+    - if: {relation: the-same-content}
+      then: {outcome: same-as}
+    - if: {statement: the-owner-says-it-is-a-copy}
+      then: {outcome: statement-refused}
+    - if: {relation: no-relation}
+      then: {outcome: neither}
+    - else: {outcome: based-on}
+  checks:
+    - outcome: same-as
+      check: The description has sameAs with the address of the earlier dataset, and no isBasedOn.
+    - outcome: same-as
+      check: mudcat set sameAs because the two Merkle hashes are equal.
+    - outcome: statement-refused
+      check: mudcat refuses the statement because the content hashes differ, and the error gives the two hashes.
+    - outcome: neither
+      check: The description has no sameAs and no isBasedOn.
+    - outcome: based-on
+      check: The description has isBasedOn with the earlier dataset, and the provenance has the derivation with its activity.
+    - outcome: based-on
+      when: {relation: a-combination-of-two}
+      check: isBasedOn names the two datasets.
+    - outcome: [same-as, based-on]
+      when: {origin: imported-public-dataset}
+      check: The description names the original by its canonical address. Its terms are not broader than the terms of the original.
+  invariants: [INV-2, INV-14]
+  verifies: [IN-8, ID-5, PR-1, UP-2]
+  reference: UC8-02
+
+- id: T8.4
+  use_case: 8
+  name: import-and-train
+  goal: Use a public dataset in training together with own data, under its licence.
+  axes:
+    licence: [permits-each-use, research-only, not-stated, a-text-with-a-new-clause]
+    purpose: [research, commercial]
+    files: [reachable, not-reachable]
+  cover:
+    format: [schema-org, dcat, croissant]
+  fixture: >
+    A public dataset in another repository, with a description in the format {format}. Its licence:
+    {licence}. Its files are {files} from the cluster of the team. The team imports the description.
+    Then it resolves the dataset together with its own data, for training with the purpose {purpose}.
+  oracle:
+    - if: {licence: not-stated}
+      then: {outcome: refused-unknown-terms}
+    - if: {licence: a-text-with-a-new-clause}
+      then: {outcome: blocked-for-review}
+    - if: {licence: research-only, purpose: commercial}
+      then: {outcome: refused}
+    - if: {files: not-reachable}
+      then: {outcome: permitted-and-not-available}
+    - else: {outcome: permitted}
+  checks:
+    - check: The import copied no bytes. The dataset is on a reference storage resource.
+    - check: Each payload of the dataset has the assertion origin imported, and its source is an external source with the terms as received.
+    - check: A second import of the same description makes no new entry.
+    - outcome: permitted
+      check: The plan covers the own data and the public data, and one policy decision names the sources of both.
+    - outcome: permitted
+      check: Where the description gives a checksum, the first read compares it with the bytes.
+    - outcome: permitted-and-not-available
+      check: The policy decision permits the request. mudcat issues no plan for the public members, and states that the cluster can reach no replica of them.
+    - outcome: refused
+      check: The error names the external source and the purpose.
+    - outcome: refused-unknown-terms
+      check: The error states that the description gives no licence.
+    - outcome: blocked-for-review
+      check: The answer names the clause that needs a review.
+    - outcome: [refused, refused-unknown-terms, blocked-for-review]
+      check: mudcat issues no plan and no credentials, for the own data also.
+  invariants: [INV-9, INV-14]
+  verifies: [IN-12, UP-1, UP-2, UP-5, UP-6, OP-5]
+  reference: UC8-03
+
+- id: T8.5
+  use_case: 8
+  name: the-original-changes
+  goal: Know when a public dataset changed or went away after the team used it.
+  axes:
+    original: [no-change, a-new-version, a-changed-description, withdrawn, changed-content-with-no-new-version]
+    use: [not-used, used-by-a-trained-model]
+  fixture: >
+    An imported public dataset. State of the original at the next import: {original}. Use of the dataset
+    in the tenant before that import: {use}.
+  oracle:
+    - if: {original: no-change}
+      then: {outcome: nothing-new}
+    - if: {original: a-new-version}
+      then: {outcome: new-snapshot}
+    - if: {original: a-changed-description}
+      then: {outcome: description-updated}
+    - if: {original: withdrawn}
+      then: {outcome: marked-as-withdrawn}
+    - else: {outcome: flagged-as-changed}
+  checks:
+    - outcome: nothing-new
+      check: The import makes no new entry and no event.
+    - outcome: new-snapshot
+      check: The dataset has a new snapshot that names the snapshot before. The old snapshot resolves as before.
+    - outcome: description-updated
+      check: The dataset has the new values. The history has the values that mudcat imported before.
+    - outcome: marked-as-withdrawn
+      check: The dataset records that its origin withdrew it, and the change stream has an event. mudcat invalidates nothing.
+    - outcome: flagged-as-changed
+      check: mudcat keeps the old checksums and makes new versions for the files that changed. The event names those files.
+    - when: {use: used-by-a-trained-model}
+      check: The resolution of the model names the same versions as before.
+    - outcome: new-snapshot
+      when: {use: used-by-a-trained-model}
+      check: mudcat reports that an input of the model has a newer version.
+    - outcome: [marked-as-withdrawn, flagged-as-changed]
+      when: {use: used-by-a-trained-model}
+      check: The model has a notice, and a person decides what to do.
+  invariants: [INV-2, INV-4]
+  verifies: [IN-12, ID-3, ID-4, EV-1, OP-5]
+  reference: UC8-03

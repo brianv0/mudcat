@@ -1,0 +1,138 @@
+# Use case 8: datasets in the public ecosystem
+
+- id: UC8-01
+  title: Publish a dataset for search engines, then correct it
+  variant: happy-path
+  given:
+    - A dataset of a research group, with one snapshot that is not published.
+    - The describe namespace has a name and a description text of 20 characters.
+  steps:
+    - actor: owner
+      do: describe
+      with: {dataset: the dataset, report: conformance}
+      expect:
+        - The report states that the description text is too short for the level Search.
+        - The report lists the licence and the creator as absent for the level Croissant.
+    - actor: owner
+      do: make_public
+      with: {snapshot: the snapshot}
+      expect:
+        - mudcat refuses, and the error names the description text.
+    - actor: owner
+      do: write_metadata
+      with: {namespace: describe, description: a text of 400 characters, license: CC-BY-4.0, creator: 'the group, with its ROR'}
+      expect:
+        - The values have a person as their assertion origin.
+    - actor: owner
+      do: make_public
+      with: {snapshot: the snapshot}
+      expect:
+        - The snapshot is published and public.
+        - The landing page has the JSON-LD description, with one distribution and its format.
+        - The sitemap has the landing page.
+        - mudcat serves a Croissant file with the files and their checksums.
+    - actor: owner
+      do: mint_doi
+      with: {snapshot: the snapshot}
+      expect:
+        - The DOI is an identifier of the snapshot, and it is in the description.
+    - actor: owner
+      do: publish
+      with: {dataset: the dataset, snapshot: a corrected snapshot}
+      expect:
+        - The landing page of the dataset shows the new snapshot, with its version and a link to the version before.
+        - The DOI leads to the description of the first snapshot, which names the newer version.
+        - The Merkle hash of the first snapshot is the same as before.
+  verifies: [IN-4, IN-8, IN-9, IN-10, IN-11, ID-3, ID-8]
+  gaps:
+    - The documents do not say what the landing page of a withdrawn snapshot shows.
+    - No requirement says which of several representations is the distribution in the description.
+
+- id: UC8-02
+  title: A copy, a subset and a combination
+  variant: policy
+  given:
+    - A public dataset P that the group published.
+    - An imported public dataset Q. Its licence permits research only.
+  steps:
+    - actor: alice
+      do: clone
+      with: {dataset: P, name: P-copy}
+      expect:
+        - The two datasets have the same Merkle hash.
+        - The description of P-copy has sameAs with the address of P.
+    - actor: alice
+      do: select
+      with: {dataset: P, predicate: one year of the data, name: P-2025}
+      expect:
+        - The description of P-2025 has isBasedOn with P, and no sameAs.
+    - actor: alice
+      do: write_metadata
+      with: {target: P-2025, statement: a copy of P}
+      expect:
+        - mudcat refuses the statement, and the error gives the two hashes.
+    - actor: alice
+      do: commit
+      with: {dataset: PQ, members: the members of P and of Q}
+      expect:
+        - The provenance has one derivation from P and one from Q.
+    - actor: alice
+      do: make_public
+      with: {snapshot: the snapshot of PQ}
+      expect:
+        - The description has isBasedOn with P and with Q.
+        - The terms in the description are not broader than research only.
+  verifies: [IN-8, ID-5, ID-13, PR-1, UP-2]
+  gaps:
+    - No rule computes the licence statement of a dataset that combines sources with different terms.
+    - The model does not say if sameAs applies between two datasets of the same tenant, or only to copies in other catalogs.
+
+- id: UC8-03
+  title: Import a public dataset, train on it, and see it change
+  variant: time
+  given:
+    - A public dataset in a repository, with a Croissant description that gives a checksum for each file.
+    - Its licence permits each use.
+    - The cluster of the team can reach the files.
+  steps:
+    - actor: alice
+      do: import_description
+      with: {address: the address of the Croissant file}
+      expect:
+        - The dataset is on a reference storage resource, and mudcat copied no bytes.
+        - Each payload has the assertion origin imported.
+        - The source is an external source with the licence as received.
+    - actor: alice
+      do: resolve
+      with: {datasets: the public dataset and an own dataset, action: train, purpose: commercial}
+      expect:
+        - mudcat permits the request, and one policy decision names the sources of both datasets.
+    - actor: job
+      do: read
+      with: {plan: the plan of the resolution}
+      expect:
+        - The first read of each public file compares the checksum of the description with the bytes.
+    - actor: job
+      do: record_run
+      with: {outputs: a model}
+      expect:
+        - The model derives from the resolution.
+    - actor: alice
+      do: import_description
+      with: {address: the same address, state: one file has new content and the version is the same}
+      expect:
+        - mudcat keeps the old checksum and makes a new version for that file.
+        - The change stream has an event that names the file.
+        - The model has a notice.
+        - The resolution of the model names the same versions as before.
+    - actor: alice
+      do: import_description
+      with: {address: the same address, state: the repository withdrew the dataset}
+      expect:
+        - The dataset records that its origin withdrew it.
+        - mudcat invalidates nothing.
+  verifies: [IN-12, UP-1, UP-2, ID-3, ID-4, OP-5]
+  gaps:
+    - No requirement says how often mudcat reads the description of an imported dataset again.
+    - The model has no state for a dataset that its origin withdrew.
+    - After the content changed at the origin, the old version has no replica that a reader can reach. The documents do not say how a later job reproduces the model.

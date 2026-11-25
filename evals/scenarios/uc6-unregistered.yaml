@@ -1,0 +1,148 @@
+# Use case 6: a catalog of data that nobody registered
+
+- id: UC6-01
+  title: Point a site agent at a bucket that nobody registered
+  variant: happy-path
+  given:
+    - An external bucket of a team, with 30 daily directories. Each directory holds 64 shard files.
+    - The storage resource has discovery on, and grouping rules for dates and for shard indexes.
+    - Nobody registered a file.
+  steps:
+    - actor: site-agent
+      do: discover
+      with: {storage: the bucket, input: the storage inventory}
+      expect:
+        - One discovered dataset exists, with 30 members.
+        - Each member is one artifact with 64 parts.
+        - Each artifact records that a site agent discovered it.
+        - Each version has the unknown source.
+    - actor: site-agent
+      do: enrich
+      with: {enricher: format plugin, members: a sample of 3}
+      expect:
+        - Three members have a structure descriptor from the enricher.
+        - The other 27 members show the same structure with the mark propagated.
+        - Each of the 30 members has a status record for the enricher.
+    - actor: site-agent
+      do: discover
+      with: {storage: the bucket, input: the inventory of the next day}
+      expect:
+        - The dataset has 31 members and the same ID.
+        - No entry of the first 30 days has a new version or a new event.
+    - actor: carol
+      do: resolve
+      with: {dataset: the discovered dataset, action: train, purpose: research}
+      expect:
+        - mudcat refuses the request, and the error states that the source is unknown.
+        - mudcat issues no credentials.
+    - actor: owner
+      do: claim
+      with: {dataset: the discovered dataset, source: an instrument source that grants train for research, description: a text of 200 characters}
+      expect:
+        - The artifacts are declared.
+        - The description has a person as its assertion origin.
+    - actor: carol
+      do: resolve
+      with: {dataset: the dataset, action: train, purpose: research}
+      expect:
+        - mudcat permits the request, and the resolution names exact versions.
+  verifies: [PL-8, ST-18, ST-20, ST-21, UP-16, UP-1]
+  gaps:
+    - The model does not define the language of a grouping rule.
+    - No rule says what mudcat does with discovered entries when discovery is set to off.
+    - The model does not say if a claim covers the members that discovery adds later.
+
+- id: UC6-02
+  title: Find the data of another team, and audit a sensitive field
+  variant: policy
+  given:
+    - A discovered dataset of team A. An enricher inferred its structure. For one file, two structures are possible, with the scores 0.9 and 0.4.
+    - The structure with the score 0.9 has the field user_email.
+    - Team B derived a copy with the field renamed to contact.
+    - A declared dataset has the tag pii on user_email. The tag propagates along derivation.
+    - The logs of the job scheduler show that the job daily_report reads the dataset of team A.
+  steps:
+    - actor: dana
+      do: search
+      with: {text: events/daily}
+      expect:
+        - The dataset of team A is in the results, above the copy of team B.
+        - The result marks its structure as computed by an enricher.
+    - actor: dana
+      do: search
+      with: {filter: read by the job daily_report}
+      expect:
+        - The dataset of team A is in the results.
+        - The relation that gives the match has the mark inferred.
+    - actor: auditor
+      do: query
+      with: {field: user_email}
+      expect:
+        - The answer lists the declared dataset.
+        - The answer lists the dataset of team A as a candidate, with the score 0.9 and the mark not confirmed.
+        - The answer lists the copy of team B, and names the derivation that carried the tag.
+    - actor: auditor
+      do: tag
+      with: {target: the dataset of team A, tag: pii, value: confirmed}
+      expect:
+        - The tag has a person as its assertion origin.
+        - The change stream has one event for the tag.
+    - actor: eve
+      do: search
+      with: {text: events/daily, access: none to the data of team A}
+      expect:
+        - The results do not contain the dataset of team A.
+  verifies: [EV-9, EV-11, QY-12, ST-17, ST-19, PR-12]
+  gaps:
+    - The documents do not say if a person with no access to the data can see the metadata of a discovered entry. Goods showed metadata to each engineer.
+    - No requirement names the signals that search uses to rank results.
+    - No requirement says how a person confirms or rejects a candidate structure.
+
+- id: UC6-03
+  title: An alert, its cause upstream, and the users downstream
+  variant: failure
+  given:
+    - A dataset D1 with one snapshot for each day. Each snapshot has about 1,000 members.
+    - A dataset D2 derives from D1 through an intermediate. The bytes of the intermediate are purged.
+    - A dataset D3 of another team and a model M also derive from D1.
+    - Each pipeline also reads one shared configuration file.
+  steps:
+    - actor: owner
+      do: set_expectation
+      with: {dataset: D1, condition: the number of members is within 20% of the snapshot before, severity: warn}
+      expect:
+        - mudcat stores the expectation.
+        - mudcat proposes the range from the history of D1.
+    - actor: pipeline
+      do: commit
+      with: {dataset: D1, members: 100}
+      expect:
+        - The commit succeeds.
+        - The snapshot has a result that is a failure.
+        - The change stream has one event for the failure, with the range and the value 100.
+    - actor: engineer
+      do: lineage
+      with: {from: the newest snapshot of D2, direction: upstream}
+      expect:
+        - The path goes through the stub of the intermediate to the snapshot of D1 with the failure.
+        - The configuration file is not in the answer.
+    - actor: engineer
+      do: query
+      with: {dependents_of: the snapshot of D1 with the failure}
+      expect:
+        - The answer lists D2, D3 and M, with the owner of each.
+    - actor: owner
+      do: set_expectation
+      with: {dataset: D1, condition: the same condition, severity: block}
+      expect:
+        - mudcat stores the new severity.
+    - actor: pipeline
+      do: publish
+      with: {dataset: D1, snapshot: the snapshot with the failure}
+      expect:
+        - mudcat refuses the publication, and the error names the expectation.
+        - The tag ref of the last publication does not move.
+  verifies: [ST-22, ST-23, EV-15, PR-3, PR-8, QY-11]
+  gaps:
+    - No requirement says how mudcat tells the owners downstream. A subscription to the change stream by dependency is one way.
+    - The model does not say if an expectation can compare a snapshot with a snapshot of a different dataset.

@@ -249,6 +249,7 @@ The runtime:
 - **Writes.** Enrichers write their outputs through the ingest writer, into their own namespaces.
 - **Review.** Outputs that need review go into a review queue in the web UI, with their status `proposed`.
 - **Recomputation.** A new enricher version starts a background recomputation of its outputs. The old outputs stay visible until the new ones are complete.
+- **Expectations.** A control plane worker tests the expectations of a dataset in the commit of each new snapshot, from the statistics of the snapshot. The results are in the same transaction as the snapshot, so an event for a failure cannot be lost.
 - **Status records.** For each entity and each enricher, the runtime keeps the time, the result and the error of the last run. An enricher that needs the output of another enricher reads this record, and waits until that output exists. It runs again when that output changes. Goods coordinates its analysis modules in the same way, with no central schedule of dependencies. The records also answer questions about operation, for example which part of a collection an enricher has processed.
 - **Order of work.** The queue for discovered entries has an order of importance: entries with metadata from a person, with many resolutions or with many dependents come first. A second queue goes through all entries more slowly. Goods runs its most expensive analysis in the same two ways.
 - **Costs.** Each run records its compute time, so that the vendor of a hosted service can charge for enrichment separately.

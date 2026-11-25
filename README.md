@@ -18,8 +18,8 @@ For any piece of data and any model, mudcat answers five questions:
 
 | Document | Contents |
 |---|---|
-| [docs/use-cases.md](docs/use-cases.md) | The five grounding use cases, with the evidence for each and the parts of the design that each one tests |
-| [evals/](evals/README.md) | 17 task templates that expand into 300 variants, 17 invariants, and 31 reference scenarios, with the results that mudcat must give |
+| [docs/use-cases.md](docs/use-cases.md) | The eight grounding use cases, with the evidence for each and the parts of the design that each one tests |
+| [evals/](evals/README.md) | 32 task templates that expand into 527 variants, 21 invariants, and 40 reference scenarios, with the results that mudcat must give |
 | [docs/model.md](docs/model.md) | The conceptual data model: RDF vocabularies (PROV-O, DCAT, CSVW, and ODRL for terms of use), Zanzibar-style access control, and how it maps to Datacat, iRODS, Rucio and the Butler |
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
@@ -46,7 +46,7 @@ The research behind the design is in the Datacat fork, at [brianv0/datacat, bran
 The project will build mudcat with constitution-based, spec-driven development. It will use GitHub Spec Kit or a similar tool (not yet chosen). The documents here are design input, not specifications:
 
 - **Constitution.** The design principles above are the first draft of the project constitution.
-- **Use cases.** Each feature specification must serve at least one of the five grounding use cases.
+- **Use cases.** Each feature specification must serve at least one of the eight grounding use cases.
 - **Evals.** Each grounding use case has evals: tasks with variation, invariants and reference scenarios that an implementation must pass. A feature specification names the tasks that it makes pass.
 - **Requirements.** The requirements document gives the inputs for the specifications.
 - **Specifications.** Each step in the architecture's build order is to become a feature specification. The plan and tasks for that step then come from the specification.

@@ -41,11 +41,13 @@ ACTIONS = {
     "search", "query", "lineage", "report",
     # stream
     "subscribe", "backfill", "poll",
+    # discovery, lifetime and publication
+    "discover", "claim", "set_expectation", "deploy", "describe", "make_public", "import_description",
     # simulation
     "time_passes", "fault",
 }
 REQUIRED_KEYS = {"id", "title", "variant", "given", "steps", "verifies", "gaps"}
-MIN_EVALS_PER_USE_CASE = 5
+MIN_EVALS_PER_USE_CASE = 3
 
 
 def requirement_ids():

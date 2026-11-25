@@ -1,0 +1,159 @@
+# Use case 7: continuous training pipelines
+
+- id: UC7-01
+  title: A daily pipeline, and the run view of the model in service
+  variant: happy-path
+  given:
+    - A dataset with one span for each day, on the branch ref main.
+    - A pipeline that trains each day on the last 7 spans, with a run token.
+    - The pipeline ran for 7 days. Today is day 8.
+  steps:
+    - actor: pipeline
+      do: commit
+      with: {dataset: the spans, add: the span of day 8}
+      expect:
+        - A new snapshot exists. It refers again to the manifests of the spans of days 1 to 7.
+    - actor: pipeline
+      do: resolve
+      with: {dataset: the spans, selection: the last 7 spans, action: train, purpose: research}
+      expect:
+        - The resolution names the versions of the spans of days 2 to 8.
+        - No span has a new replica.
+        - The answer gives the similarity to the input of day 7 from statistics.
+    - actor: pipeline
+      do: record_run
+      with: {activities: 'validation, transform, training, evaluation', token: the run token}
+      expect:
+        - Each activity records the pipeline and the run ID of day 8.
+        - The usage relations have the mark observed.
+    - actor: pipeline
+      do: publish_model
+      with: {model: the model of day 8}
+      expect:
+        - The model version exists, and it derives from the resolution.
+    - actor: pipeline
+      do: deploy
+      with: {model: the model of day 8, service: ranking}
+      expect:
+        - A deployment activity exists, with the service and the time.
+    - actor: engineer
+      do: lineage
+      with: {view: the run view of the model of day 8}
+      expect:
+        - The view has the 7 spans, the 4 activities, the code version and the deployment.
+        - The view has no activity of the runs of days 1 to 7.
+    - actor: clock
+      do: time_passes
+      with: {days: 60}
+      expect:
+        - The pipeline made 60 more runs.
+    - actor: engineer
+      do: lineage
+      with: {view: the run view of the model of day 8}
+      expect:
+        - The view is the same as 60 days before.
+  verifies: [PR-4, PR-9, PR-10, PR-11, UP-3, ID-13]
+  gaps:
+    - The model does not define a window over the members of a dataset, such as the last 7 spans, as a kind of selection.
+    - No requirement covers the similarity of two inputs from statistics.
+
+- id: UC7-02
+  title: A bad span that is found after deployment
+  variant: removal
+  given:
+    - The span of day 5 has bad values. Nobody knows this on day 5.
+    - The runs of days 5 to 11 used the span. The models of days 6 and 9 are in service.
+    - Each model started from the model of the day before.
+    - The dataset has an expectation for the distribution of one field.
+  steps:
+    - actor: pipeline
+      do: commit
+      with: {dataset: the spans, add: 'the span of day 12, with values that drifted'}
+      expect:
+        - The snapshot has a result that is a failure.
+    - actor: pipeline
+      do: resolve
+      with: {dataset: the spans, option: only snapshots that passed, action: train, purpose: research}
+      expect:
+        - mudcat refuses the request and issues no credentials.
+        - The answer names the snapshot of day 11 as the newest that passed.
+    - actor: engineer
+      do: query
+      with: {dependents_of: the span of day 5}
+      expect:
+        - The answer lists the runs and models of days 5 to 11 and the deployments of days 6 and 9.
+        - The answer states that it did not follow the base-model role.
+    - actor: engineer
+      do: query
+      with: {dependents_of: the span of day 5, roles: with the base-model role}
+      expect:
+        - The answer also lists the model of day 12 and each later model.
+    - actor: engineer
+      do: invalidate
+      with: {target: the span of day 5, reason: bad values from a sensor}
+      expect:
+        - Each listed model has a flag with the number of affected elements.
+        - mudcat changed no model and no deployment.
+    - actor: pipeline
+      do: resolve
+      with: {dataset: the spans, selection: the last 7 spans, action: train, purpose: research}
+      expect:
+        - The plan does not contain the span of day 5, and the answer gives the number of excluded elements.
+  verifies: [ST-22, RD-10, QY-11, PR-3, UP-9, QY-8]
+  gaps:
+    - The documents do not say if a flag on a model also goes to the deployments of that model.
+    - An invalidation for bad quality and an invalidation for a takedown have the same record. The model does not separate the two reasons.
+
+- id: UC7-03
+  title: Runs that led to nothing
+  variant: time
+  given:
+    - A pipeline made 100 runs. Twenty models are in service. Ten other models are the start point of a model in service.
+    - Each run made transformed data of the class intermediate, with a time to live of 7 days, and training shards of the class cache.
+    - The period for abandoned data is 30 days. A retention rule purges abandoned caches.
+  steps:
+    - actor: clock
+      do: time_passes
+      with: {days: 7}
+      expect:
+        - The bytes of each intermediate are purged, with one deletion receipt for each replica.
+        - Each intermediate has a stub with its checksum and its statistics.
+    - actor: engineer
+      do: lineage
+      with: {from: a model in service, direction: upstream}
+      expect:
+        - The path goes through the stub to the raw input.
+    - actor: clock
+      do: time_passes
+      with: {days: 30}
+      expect:
+        - No run used the shards again.
+    - actor: operator
+      do: report
+      with: {kind: abandoned data}
+      expect:
+        - The report lists the shards and the models of 70 runs, with sizes, sources and duties.
+        - The report does not list the 30 runs whose models are in service or are a start point of a model in service.
+    - actor: operator
+      do: place_hold
+      with: {target: the shards of one run in the report, reason: a dispute}
+      expect:
+        - The shards are in the retention compartment.
+    - actor: clock
+      do: time_passes
+      with: {days: 1}
+      expect:
+        - The retention rule purged the shards of 69 runs.
+        - The shards under the hold have their bytes.
+        - The 70 models have their bytes, and the report asks for a decision.
+    - actor: clock
+      do: time_passes
+      with: {days: 365}
+      expect:
+        - The stubs of each old run are compacted into a summary on its activities.
+        - A lineage query from a model in service gives the same raw input as before.
+  verifies: [PL-7, PR-8, QY-9, QY-10, UP-8, UP-17]
+  gaps:
+    - No requirement covers the compaction of stubs.
+    - 'The model does not say who sets the lifetime class of an output: the pipeline, the collection or a rule.'
+    - A model that nobody deployed is durable by default. The documents do not say if a tenant can change that default.

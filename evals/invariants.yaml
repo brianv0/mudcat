@@ -86,3 +86,23 @@
   statement: The provenance relations of a version exist after mudcat purges the bytes of the version.
   observe: After each purge, run a lineage query from an output that derives from the purged version, and compare the result with the result before the purge.
   verifies: [PR-8]
+
+- id: INV-18
+  statement: A public description contains nothing that an anonymous reader cannot see.
+  observe: Compare each property of each public description with the answer that the catalog gives to a request with no token.
+  verifies: [IN-13]
+
+- id: INV-19
+  statement: A second discovery of the same object makes no new entry and no new event.
+  observe: Run each discovery two times, and count entries and events.
+  verifies: [PL-8, OP-5]
+
+- id: INV-20
+  statement: mudcat reads no data bytes when it tests an expectation.
+  observe: The record of storage access shows no read between a commit and its expectation results.
+  verifies: [ST-22]
+
+- id: INV-21
+  statement: No metadata value of a discovered entry has a person as its assertion origin, unless a person wrote that value.
+  observe: For each discovered entry, compare the assertion origin of each value with the log of writes by persons.
+  verifies: [ST-7, ST-18]
