@@ -27,8 +27,9 @@ For any piece of data and any model, mudcat answers five questions:
 | [docs/requirements.md](docs/requirements.md) | The system requirements, written to the NASA guidance for requirements, with a rationale and a verification method for each |
 | [docs/fields.md](docs/fields.md) | Guidelines for each scientific and technical field: domain semantics, schema profiles, formats and examples |
 | [docs/open-items.md](docs/open-items.md) | Working notes: what the discussion decided and the documents do not yet contain, the decisions that need a confirmation, and the conventions of the project |
+| [docs/discussion/](docs/discussion/README.md) | The record of the design discussion: 116 questions and the answers as they were given, with the reasons, the comparisons and the options that were rejected |
 
-The research behind the design is in the Datacat fork, at [brianv0/datacat, branch `claude/cool-keller-domhwr`](https://github.com/brianv0/datacat/tree/claude/cool-keller-domhwr). Its `reports/` directory holds the two reports and `research_notes/` holds the notes that support them.
+The research behind the design is in the Datacat fork, at [brianv0/datacat, branch `claude/cool-keller-domhwr`](https://github.com/brianv0/datacat/tree/claude/cool-keller-domhwr). Its `reports/` directory holds the two reports and `research_notes/` holds the notes that support them, with reading notes on Goods and later catalog papers, on search for datasets, and on conformance tests for the Iceberg REST catalog.
 
 ## Design principles
 

@@ -123,3 +123,4 @@ The assistant made these decisions while it wrote the documents and the evals. E
 - **Diagrams** are in D2 with the ELK layout. The D2 program is not in the repository.
 - **Checks before each commit:** `python3 evals/check.py`.
 - **Research notes** are in the repository brianv0/datacat, branch `claude/cool-keller-domhwr`, under `research_notes/` and `reports/`.
+- **The record of the discussion** is in `docs/discussion/`. It has each question and each answer, not edited. The two answers about the database schema are not in it.
