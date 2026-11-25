@@ -488,12 +488,12 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
     // whole tenant is never better; the planner cannot know this, because it has no statistics
     // of the tenant column (see schema.sql)
     let drives_from_index = comp.selective.values().any(|v| *v) || q.contains("permitted(");
-    if !drives_from_index {
-        tx.exec("set local enable_sort = off", &[]).await?;
-    }
-    let rows = tx.t.query(sql.as_str(), &params).await;
-    tx.exec("set local enable_sort = on", &[]).await?;
-    let rows = rows?;
+    let rows = if drives_from_index {
+        tx.q(sql.as_str(), &params).await?
+    } else {
+        // the setting, the query and the setting back go to the database together
+        tx.q_between("set local enable_sort = off", sql.as_str(), &params, "set local enable_sort = on").await?
+    };
     let more = rows.len() as i64 > limit;
     let items: Vec<Value> = rows
         .iter()

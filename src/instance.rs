@@ -48,6 +48,22 @@ pub struct Metrics {
     pub bytes_copied_for_catalog: AtomicU64,
     /// Decisions that came from a cache. The built-in adapter never caches (AC-7).
     pub cached_decisions: AtomicU64,
+    /// Round trips to the database that the transactions of this instance made. Statements that
+    /// go to the database together, without a wait for an answer between them, count one time.
+    pub db_round_trips: AtomicU64,
+    /// Statements that the transactions of this instance ran.
+    pub db_statements: AtomicU64,
+}
+
+impl Metrics {
+    /// (round trips, statements) so far.
+    pub fn db(&self) -> (u64, u64) {
+        (self.db_round_trips.load(Ordering::Relaxed), self.db_statements.load(Ordering::Relaxed))
+    }
+    fn count_db(&self, round_trips: u64, statements: u64) {
+        self.db_round_trips.fetch_add(round_trips, Ordering::Relaxed);
+        self.db_statements.fetch_add(statements, Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone)]
@@ -188,7 +204,13 @@ pub struct Instance {
 }
 
 pub fn make_pool(url: &str, size: usize) -> Result<Pool> {
-    let cfg: tokio_postgres::Config = url.parse().map_err(|e: tokio_postgres::Error| Error::Pool(e.to_string()))?;
+    let mut cfg: tokio_postgres::Config = url.parse().map_err(|e: tokio_postgres::Error| Error::Pool(e.to_string()))?;
+    // Statements are prepared one time for each connection (see `Tx::q`). The plan of a prepared
+    // statement is still made for the values of each execution, as it was when each statement
+    // was sent as text: a plan for unknown values cannot use the range of a path prefix.
+    if cfg.get_options().is_none() {
+        cfg.options("-c plan_cache_mode=force_custom_plan");
+    }
     let mgr = Manager::from_config(cfg, NoTls, ManagerConfig { recycling_method: RecyclingMethod::Fast });
     Pool::builder(mgr).max_size(size).build().map_err(|e| Error::Pool(e.to_string()))
 }
@@ -459,6 +481,11 @@ impl Session {
     }
     /// Open a transaction scoped to the tenant of the session.
     pub async fn begin<'a>(&'a self, client: &'a mut deadpool_postgres::Object) -> Result<Tx<'a>> {
+        // Some statements are built for a request (the query language), so the prepared
+        // statements of a connection have a limit; past it they all go and are prepared again.
+        if client.statement_cache.size() > 2000 {
+            client.statement_cache.clear();
+        }
         let t = client.transaction().await?;
         let tenant = self.tenant.map(|t| t.to_string()).unwrap_or_default();
         let location = self.tenant.and_then(|t| self.inst.tenant(t)).map(|t| t.location).unwrap_or_else(|| "shared".into());
@@ -467,10 +494,11 @@ impl Session {
         // have moved the tenant, and then this database is not the place to read or to write.
         // (The statement is prepared one time for each connection: a statement that is planned
         // again in each transaction costs more than the lookup.)
-        let begin = t
-            .prepare_cached("select set_config('mudcat.tenant', $1, true), (select status || '|' || location from tenant where id = nullif($1, '')::uuid)")
-            .await?;
-        let row = t.query_one(&begin, &[&tenant]).await?;
+        let known = t.statement_cache.size();
+        let begin = Box::pin(t.prepare_cached("select set_config('mudcat.tenant', $1, true), (select status || '|' || location from tenant where id = nullif($1, '')::uuid)")).await?;
+        let row = Box::pin(t.query_one(&begin, &[&tenant])).await?;
+        // BEGIN, and the scope statement (and its preparation, the first time on a connection)
+        self.inst.metrics.count_db(2 + (t.statement_cache.size() > known) as u64, 2);
         if let Some(id) = self.tenant {
             let marker: Option<String> = row.get(1);
             if !at_home(marker.as_deref(), &location, false) && !crate::mutant("no-home-check") {
@@ -511,21 +539,58 @@ impl<'a> Tx<'a> {
         &self.sess.inst
     }
 
+    /// A statement, prepared one time for each connection. A statement that is sent as text
+    /// costs two round trips each time: one to prepare it, and one to run it.
+    async fn statement(&self, sql: &str) -> Result<tokio_postgres::Statement> {
+        let known = self.t.statement_cache.size();
+        // (The futures of the database driver are large. They are on the heap, so that each
+        // function of mudcat that waits for a statement does not carry them in its own future:
+        // with them inside, deep call chains used up the stack of a thread in a debug build.)
+        let st = Box::pin(self.t.prepare_cached(sql)).await?;
+        if self.t.statement_cache.size() > known {
+            self.sess.inst.metrics.count_db(1, 0);
+        }
+        Ok(st)
+    }
+    /// One statement in a round trip of its own.
+    fn count_one(&self) {
+        self.sess.inst.metrics.count_db(1, 1);
+    }
     pub async fn q(&self, sql: &str, p: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>> {
-        Ok(self.t.query(sql, p).await?)
+        let st = self.statement(sql).await?;
+        self.count_one();
+        Ok(Box::pin(self.t.query(&st, p)).await?)
     }
     pub async fn q1(&self, sql: &str, p: &[&(dyn ToSql + Sync)]) -> Result<Row> {
-        let mut rows = self.t.query(sql, p).await?;
+        let st = self.statement(sql).await?;
+        self.count_one();
+        let mut rows = Box::pin(self.t.query(&st, p)).await?;
         if rows.len() != 1 {
             return Err(Error::Other(anyhow::anyhow!("expected one row, got {}: {}", rows.len(), sql.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect::<String>())));
         }
         Ok(rows.pop().unwrap())
     }
     pub async fn qopt(&self, sql: &str, p: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>> {
-        Ok(self.t.query_opt(sql, p).await?)
+        let st = self.statement(sql).await?;
+        self.count_one();
+        Ok(Box::pin(self.t.query_opt(&st, p)).await?)
     }
     pub async fn exec(&self, sql: &str, p: &[&(dyn ToSql + Sync)]) -> Result<u64> {
-        Ok(self.t.execute(sql, p).await?)
+        let st = self.statement(sql).await?;
+        self.count_one();
+        Ok(Box::pin(self.t.execute(&st, p)).await?)
+    }
+    /// A query between two statements that have no parameters (a setting for the query, and the
+    /// setting back). The three go to the database together and it runs them in this order: one
+    /// round trip.
+    pub async fn q_between(&self, before: &str, sql: &str, p: &[&(dyn ToSql + Sync)], after: &str) -> Result<Vec<Row>> {
+        let (b, st, a) = (self.statement(before).await?, self.statement(sql).await?, self.statement(after).await?);
+        self.sess.inst.metrics.count_db(1, 3);
+        let (set, rows, reset) = Box::pin(async { tokio::join!(self.t.execute(&b, &[]), self.t.query(&st, p), self.t.execute(&a, &[])) }).await;
+        set?;
+        let rows = rows?;
+        reset?;
+        Ok(rows)
     }
 
     /// The commit record of this transaction. The first write makes it (EV-14).
@@ -540,33 +605,36 @@ impl<'a> Tx<'a> {
                 return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
             }
         }
-        if !crate::mutant("no-move-fence") {
-            // The fence of a tenant move. A writer holds this lock, shared, to the end of its
-            // transaction, and the mover takes it exclusively before it copies. The writer does
-            // not wait for it: a mover that holds the lock, or that waits for it, makes this
-            // request fail, and the client tries again. So the mover waits only for the writers
-            // that had passed the fence, and new writers cannot keep it waiting.
-            let fence = self.t.prepare_cached("select pg_try_advisory_xact_lock_shared(hashtextextended($1, 11))").await?;
-            let passed: bool = self.t.query_one(&fence, &[&tenant.to_string()]).await?.get(0);
-            if !passed {
-                return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
-            }
+        // Three statements go to the database together and it runs them in this order: one
+        // round trip for the scope of a write.
+        //
+        // 1. The fence of a tenant move. A writer holds this lock, shared, to the end of its
+        //    transaction, and the mover takes it exclusively before it copies. The writer does
+        //    not wait for it: a mover that holds the lock, or that waits for it, makes this
+        //    request fail, and the client tries again. So the mover waits only for the writers
+        //    that had passed the fence, and new writers cannot keep it waiting.
+        // 2. The home marker, read again with the fence held. The registry of this process
+        //    cannot answer: another process can have moved the tenant. It is a statement of its
+        //    own, after the lock (under READ COMMITTED it sees what the mover committed before
+        //    it opened the fence); a transaction with one snapshot for all its statements would
+        //    not see it.
+        // 3. The commit record. If 1 or 2 refuses, the caller gets the error and the
+        //    transaction ends without a commit, so the record goes with it.
+        let key = tenant.to_string();
+        let fence = self.statement(if crate::mutant("no-move-fence") { "select $1::text is not null" } else { "select pg_try_advisory_xact_lock_shared(hashtextextended($1, 11))" }).await?;
+        let home = self.statement("select status || '|' || location from tenant where id = $1").await?;
+        let record = self.statement("insert into commit_log (commit_id, actor, at) values (nextval('commit_seq'), $1, $2) returning commit_id").await?;
+        let (p1, p2, p3): ([&(dyn ToSql + Sync); 1], [&(dyn ToSql + Sync); 1], [&(dyn ToSql + Sync); 2]) = ([&key], [&tenant], [&self.sess.principal.0, &self.now]);
+        let (passed, marker, recorded) = Box::pin(async { tokio::join!(self.t.query_one(&fence, &p1), self.t.query_opt(&home, &p2), self.t.query_one(&record, &p3)) }).await;
+        self.sess.inst.metrics.count_db(1, 3);
+        if !passed?.get::<_, bool>(0) {
+            return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
         }
-        if !crate::mutant("no-home-check") {
-            // With the fence, read the home marker again. The registry of this process cannot
-            // answer: another process can have moved the tenant. This is a statement of its own
-            // (under READ COMMITTED it sees what the mover committed before it opened the
-            // fence); a transaction with one snapshot for all its statements would not see it.
-            let home = self.t.prepare_cached("select status || '|' || location from tenant where id = $1").await?;
-            let marker: Option<String> = self.t.query_opt(&home, &[&tenant]).await?.map(|r| r.get(0));
-            if !at_home(marker.as_deref(), &self.location, true) {
-                return Err(self.sess.inst.not_at_home(tenant).await);
-            }
+        let marker: Option<String> = marker?.map(|r| r.get(0));
+        if !at_home(marker.as_deref(), &self.location, true) && !crate::mutant("no-home-check") {
+            return Err(self.sess.inst.not_at_home(tenant).await);
         }
-        let id: i64 = self.t.query_one("select nextval('commit_seq')", &[]).await?.get(0);
-        self.t
-            .execute("insert into commit_log (commit_id, actor, at) values ($1, $2, $3)", &[&id, &self.sess.principal.0, &self.now])
-            .await?;
+        let id: i64 = recorded?.get(0);
         self.commit = Some(id);
         Ok(id)
     }
@@ -660,10 +728,18 @@ impl<'a> Tx<'a> {
         if let Some(c) = self.commit {
             if self.emitted {
                 let tenant = self.sess.tenant_id()?;
-                self.t.execute("select pg_advisory_xact_lock(hashtextextended($1, 13))", &[&tenant.to_string()]).await?;
-                self.t.execute("update outbox set ord = (select nextval('outbox_ord_seq')) where commit_id = $1", &[&c]).await?;
+                // the commit lock and the order number go to the database together: one round trip
+                let key = tenant.to_string();
+                let lock = self.statement("select pg_advisory_xact_lock(hashtextextended($1, 13))").await?;
+                let order = self.statement("update outbox set ord = (select nextval('outbox_ord_seq')) where commit_id = $1").await?;
+                let (p1, p2): ([&(dyn ToSql + Sync); 1], [&(dyn ToSql + Sync); 1]) = ([&key], [&c]);
+                let (locked, ordered) = Box::pin(async { tokio::join!(self.t.execute(&lock, &p1), self.t.execute(&order, &p2)) }).await;
+                self.sess.inst.metrics.count_db(1, 2);
+                locked?;
+                ordered?;
             }
         }
+        self.sess.inst.metrics.count_db(1, 1);
         self.t.commit().await?;
         Ok(())
     }

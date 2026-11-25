@@ -19,7 +19,7 @@ target/release/mudcat move-tenant group-a mudcat_group_a
 target/release/mudcat-evals --scale full        # all 280 variants with the invariants
 target/release/mudcat-evals --template T3.2 -v  # one template, each check
 target/release/mudcat-bench                     # the benchmarks of performance.md
-cargo test                                      # unit tests, the 31 reference scenarios, and the test of event order
+cargo test                                      # unit tests, the 31 reference scenarios, the tests with fixed steps, the budgets of round trips
 
 # the checks, fast:
 target/debug/mudcat-evals --scale smoke --jobs 6   # all 280 variants, cover values capped at 50: about 1 minute (debug build)
@@ -35,7 +35,7 @@ The runner makes a database of its own for each run (`mudcat_evals_<time>_<pid>`
 | Module | Design | Contents |
 |---|---|---|
 | `schema.sql` | architecture.md, "Catalog database", "Tenants" | One schema for one tenant and for many (OP-13). The tenant ID is the first column of every key and defaults to the tenant of the session; row-level security is forced, also for the owner of the tables |
-| `instance.rs` | "Tenants" | The instance, the tenant-scoped session and transaction, the commit record of each write (EV-14), the outbox writer, the clock |
+| `instance.rs` | "Tenants" | The instance, the tenant-scoped session and transaction (statements prepared one time for each connection, a count of round trips), the home marker and the fence of a tenant move, the commit record of each write (EV-14), the outbox writer, the clock |
 | `namespace.rs` | model.md section 1 | Storage resources, collections with ACL roots and mounts, artifacts, versions, replicas, identifiers with history. Registration is idempotent on (artifact, checksum); batches use set-based statements |
 | `metadata.rs` | model.md section 3 | Payloads per namespace with an owner and writers (ST-9), validation against declared attributes (ST-6), assertion origin (ST-7), the typed attribute index (PF-9), customer-held values (ST-10), tags with inheritance and propagation (ST-17), enrichers and review (ST-13 to ST-15) |
 | `datasets.rs` | model.md section 4 | Datasets, snapshots over shared manifest references, branch and tag refs with history, commits with requirements, publication with Merkle hashes, method equivalence, changes between snapshots (EV-12), cheap copies inside a tenant and between tenants (ID-13), selections, annotation sets, representations, sealing (OP-6) and expiry (ID-9) |
@@ -110,4 +110,4 @@ The evals contain decisions that the design documents do not state (evals/README
 
 ## Not implemented
 
-These parts of the design are not in this implementation: the SpiceDB and OpenFGA adapters (the schema compiles for both, but the port has only the built-in adapter); Apache Arrow as the bulk wire format (the bulk interface uses JSON); Parquet or Lance manifest files (manifests are JSON Lines); MLflow and Weights & Biases ingest (OpenLineage events are imported); the signed federation feed between instances; the Python SDK, the web UI, the fsspec file system and the Datacat importer; JSON Schemas for each event type (events carry a `dataschema` URL only); the customer gateway as a separate service. A tenant move whose process stops in the middle is not repaired: the status stays `moving`, the tenant can be read and not written, and an operator must set the status back. A move reads the transactions of other sessions in `pg_stat_activity`, so the server processes must use one database role. A dedicated database is on the same database server as the shared one.
+These parts of the design are not in this implementation: the SpiceDB and OpenFGA adapters (the schema compiles for both, but the port has only the built-in adapter); Apache Arrow as the bulk wire format (the bulk interface uses JSON); Parquet or Lance manifest files (manifests are JSON Lines); MLflow and Weights & Biases ingest (OpenLineage events are imported); the signed federation feed between instances; the Python SDK, the web UI, the fsspec file system and the Datacat importer; JSON Schemas for each event type (events carry a `dataschema` URL only); the customer gateway as a separate service. A tenant move whose process stops in the middle is not repaired: the status stays `moving`, the tenant can be read and not written, and an operator must set the status back. A move reads the transactions of other sessions in `pg_stat_activity`, so the server processes must use one database role. A dedicated database is on the same database server as the shared one. A server process must start again after a change of the schema: its prepared statements were made for the old columns.

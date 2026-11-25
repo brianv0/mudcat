@@ -56,7 +56,30 @@ The first full run had several results that were far from the targets. Each had 
 | Search | 0.95 s | 0.31 s | The spelling tolerance computed trigram similarity against every document that contains a common word. It now finds close words in the vocabulary of the index and expands the lexical query. The check of the results is one bulk check, with one audit entry for each search |
 | Lineage across models | 2 nodes | 402 nodes | The traversal did not follow `fineTunedFrom` from an entity that also had a generating activity. This was a defect, not a performance problem; the benchmark found it |
 
-**The home marker costs nothing only with prepared statements.** Each transaction now reads the row of its tenant in its first statement, and each write transaction runs two short statements more (see [implementation.md](implementation.md), "Findings"). Sent as text and planned again each time, the lookup added 0.06 ms to each transaction and 0.11 ms to each write transaction, and the rate of empty transactions at 8 clients fell from 81,000 to 46,000 per second. The three statements are now prepared one time for each connection, and the cost is the same as before the change. The numbers are from `pgbench` with the same statements on the same host, not from the Rust client. The other statements of mudcat are still sent as text and planned each time; this is a cost that the measurements above include and that a statement cache would remove.
+**The home marker costs nothing only with prepared statements.** Each transaction now reads the row of its tenant in its first statement, and each write transaction runs two short statements more (see [implementation.md](implementation.md), "Findings"). Sent as text and planned again each time, the lookup added 0.06 ms to each transaction and 0.11 ms to each write transaction, and the rate of empty transactions at 8 clients fell from 81,000 to 46,000 per second. The three statements are now prepared one time for each connection, and the cost is the same as before the change. The numbers are from `pgbench` with the same statements on the same host, not from the Rust client. After this measurement all statements of mudcat got the same treatment (see "Round trips to the database").
+
+## Round trips to the database
+
+A round trip is a wait for the database. Its cost is the network between mudcat and PostgreSQL: about 0.1 ms on one host, and 0.5 ms or more between hosts. So the number of round trips, and not the work of a statement, sets the lowest latency of an operation. Each transaction counts its round trips, and `tests/round_trips.rs` has a budget for each of seven operations; a change that needs more round trips fails the test.
+
+| Operation | Round trips before | Now | Statements now |
+|---|---|---|---|
+| The scope of a transaction (begin; tenant and home marker; commit) | 3 | 3 | 3 |
+| One read statement | 5 | 4 | 4 |
+| One access decision | 27 | 15 | 15 |
+| A query, first page | 17 | 8 | 10 |
+| Register one artifact | 39 | 18 | 21 |
+| Commit: add one member to a dataset | 70 | 35 | 38 |
+| Resolve a published dataset with 10 members | 105 | 54 | 57 |
+
+The counts before are from the statement log of the server, and the counts now are from the counter in mudcat. Two changes made the difference:
+
+- **Statements are prepared one time for each connection.** A statement that is sent as text costs two round trips each time: one to prepare it and one to run it. That was 45% of all round trips. The plan of a prepared statement is still made for the values of each execution (`plan_cache_mode = force_custom_plan`), as before, because a plan for unknown values cannot use the range of a path prefix. A connection keeps at most 2,000 prepared statements.
+- **Statements that do not need the answer of the one before go to the database together.** The fence of a tenant move, the home marker and the commit record of a write are one round trip (six before). The commit lock and the order number are one (four before). The setting for a page query, the query and the setting back are one.
+
+On one host, where a round trip is cheapest, the smoke scale of the evals went from 61 s to 44 s and the quick scale from 179 s to 143 s.
+
+What remains is the number of statements, and it is the larger part. An access decision is 12 lookups, each after the answer of the one before. A registration has 21 statements, and most of them need no answer from the one before, because mudcat makes each ID itself. If the statements of an operation went together, or if a decision were one statement, each operation would need two or three round trips: read what the operation needs, then write all of it. That is a change of each path and not of the transaction layer. It is not made; the budgets in the test are the place to set the target.
 
 ## Open points
 
