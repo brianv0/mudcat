@@ -91,6 +91,8 @@ pub struct Record {
     pub search_results: Vec<(chrono::DateTime<chrono::Utc>, Vec<Uuid>)>,
     pub holds: Vec<Uuid>,
     pub notes: Vec<String>,
+    /// databases that the variant made and that the runner drops at its end
+    pub cleanup_databases: Vec<String>,
 }
 
 pub struct Ctx {
@@ -271,5 +273,12 @@ pub async fn run_variant(base: &Arc<Instance>, tpl: &Template, v: &Variant, scal
     result.checks = checks;
     result.seconds = started.elapsed().as_secs_f64();
     let _ = std::fs::remove_dir_all(&dir);
+    for db in &ctx.record.cleanup_databases {
+        if let Ok(p) = crate::instance::make_pool(&crate::instance::db_url(&inst.base_url, "postgres"), 1) {
+            if let Ok(c) = p.get().await {
+                let _ = c.batch_execute(&format!("drop database if exists \"{db}\" with (force)")).await;
+            }
+        }
+    }
     result
 }

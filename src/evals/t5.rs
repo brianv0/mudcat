@@ -519,14 +519,7 @@ pub async fn tenant_move(ctx: &mut Ctx) -> Result<()> {
         ctx.check("The consumer sees no event of the move that failed", no_gap && only_writes, "");
     }
     ctx.step().await?;
-    // drop the dedicated database of the variant
-    if let Ok(t) = crate::instance::make_pool(&crate::instance::db_url(&inst.base_url, "postgres"), 1) {
-        if moved.is_ok() {
-            // move back is not part of the task; leave the rows, drop nothing that the tenant uses
-            let _ = t;
-        } else if let Ok(c) = t.get().await {
-            let _ = c.batch_execute(&format!("drop database if exists \"{target}\" with (force)")).await;
-        }
-    }
+    // the runner drops the dedicated database after the last check of the invariants
+    ctx.record.cleanup_databases.push(target.clone());
     Ok(())
 }

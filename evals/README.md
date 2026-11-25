@@ -156,6 +156,8 @@ target/release/mudcat-evals --template T3.2 --verbose
 target/release/mudcat-evals --scale quick         # large cover values capped at 2000, for a fast run
 ```
 
+The last full run passed 280 of 280 variants and 1,065 of 1,065 checks; it takes about 2 hours on 4 CPUs, mostly for the variants of T1.3 with 100,000 members and of T5.4 with 5,000,000 versions. The quick scale takes about 3 minutes.
+
 For each variant the runner makes a fresh tenant, builds the fixture from the parameters, lets a scripted actor reach the goal through the mudcat interfaces, and then compares the observed outcome with the oracle. A driver reports each check by a part of its text in tasks.yaml; a check that applies to the variant and that no driver evaluated counts as a failure. The actor is scripted, not an AI agent; the evals with an agent as actor are still to do.
 
 ## Not yet done

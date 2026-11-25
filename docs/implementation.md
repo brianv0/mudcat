@@ -1,6 +1,6 @@
 # mudcat implementation
 
-Status: a working reference implementation in Rust of the design in [model.md](model.md), [architecture.md](architecture.md) and [hosted.md](hosted.md). It passes all 280 variants of the 15 task templates in [evals/](../evals/README.md), with the 16 invariants. Performance measurements are in [performance.md](performance.md).
+Status: a working reference implementation in Rust of the design in [model.md](model.md), [architecture.md](architecture.md) and [hosted.md](hosted.md). It passes all 280 variants of the 15 task templates in [evals/](../evals/README.md) at the full scale of the templates (up to 100,000 members and 5,000,000 versions), with the 16 invariants checked after each step; the results are in [evals/results/latest-full.json](../evals/results/latest-full.json). It also passes the 31 reference scenarios as integration tests. Performance measurements are in [performance.md](performance.md).
 
 ## Build and run
 
