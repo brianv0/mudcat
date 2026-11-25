@@ -484,7 +484,13 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
         wh.join(" and ")
     );
     let params: Vec<&(dyn ToSql + Sync)> = comp.params.iter().map(|p| p.as_ref() as &(dyn ToSql + Sync)).collect();
-    let rows = tx.t.query(sql.as_str(), &params).await?;
+    // a page in key order: the scan of the key index gives the order, so a plan that sorts the
+    // whole tenant is never better; the planner cannot know this, because it has no statistics
+    // of the tenant column (see schema.sql)
+    tx.exec("set local enable_sort = off", &[]).await?;
+    let rows = tx.t.query(sql.as_str(), &params).await;
+    tx.exec("set local enable_sort = on", &[]).await?;
+    let rows = rows?;
     let more = rows.len() as i64 > limit;
     let items: Vec<Value> = rows
         .iter()

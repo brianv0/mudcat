@@ -531,7 +531,7 @@ async fn next_level(tx: &Tx<'_>, frontier: &[Uuid], direction: &str, ubiquitous:
             "select g.entity_id, g.activity_id, 'wasGeneratedBy' from generation g where g.entity_id = any($1)
              union all select u.activity_id, u.entity_id, 'used:' || u.role from usage u where u.activity_id = any($1) and not (u.role = any($2))
              union all select d.entity_id, d.from_id, d.kind from derivation d where d.entity_id = any($1)
-               and not exists (select 1 from generation g where g.entity_id = d.entity_id)
+               and (d.kind <> 'wasDerivedFrom' or not exists (select 1 from generation g where g.entity_id = d.entity_id))
              union all select r.snapshot_id, e.member_id, 'hadMember' from manifest_ref r
                  join manifest_entry e on e.manifest_id = r.manifest_id and e.tenant_id = r.manifest_tenant
                 where r.snapshot_id = any($1) and e.member_kind = 'snapshot' and not (e.member_id = any(r.excluded))",

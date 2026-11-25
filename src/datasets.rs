@@ -438,33 +438,18 @@ async fn commit_one(tx: &mut Tx<'_>, ch: &DatasetChange) -> Result<Committed> {
     let commit = tx.commit_id().await?;
     let snap = new_id();
     // manifest references: the parent's, restricted for removed members, plus one new manifest
-    let refs = tx.q("select ordinal, manifest_tenant, manifest_id, excluded from manifest_ref where snapshot_id = $1 order by ordinal", &[&head]).await?;
-    let mut ordinal = 0i32;
-    if !refs.is_empty() {
-        // which manifest holds each removed member
-        let mids: Vec<Uuid> = refs.iter().map(|r| r.get(2)).collect();
-        let holders = tx
-            .q("select manifest_id, member_id from manifest_entry where manifest_id = any($1) and member_id = any($2)", &[&mids, &removed])
-            .await?;
-        let mut by_manifest: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
-        for h in holders {
-            by_manifest.entry(h.get(0)).or_default().push(h.get(1));
-        }
-        for r in &refs {
-            let mt: Uuid = r.get(1);
-            let mid: Uuid = r.get(2);
-            let mut ex: Vec<Uuid> = r.get(3);
-            if let Some(more) = by_manifest.get(&mid) {
-                ex.extend(more.iter().copied());
-            }
-            tx.exec(
-                "insert into manifest_ref (snapshot_id, ordinal, manifest_tenant, manifest_id, excluded) values ($1,$2,$3,$4,$5)",
-                &[&snap, &ordinal, &mt, &mid, &ex],
-            )
-            .await?;
-            ordinal += 1;
-        }
-    }
+    // the parent's manifest references, with one statement; a removed member goes to the
+    // exclusions of the reference whose manifest holds it
+    tx.exec(
+        "insert into manifest_ref (snapshot_id, ordinal, manifest_tenant, manifest_id, excluded)
+         select $2, r.ordinal, r.manifest_tenant, r.manifest_id,
+                r.excluded || coalesce((select array_agg(e.member_id) from manifest_entry e
+                                         where e.manifest_id = r.manifest_id and e.tenant_id = r.manifest_tenant and e.member_id = any($3)), '{}')
+           from manifest_ref r where r.snapshot_id = $1",
+        &[&head, &snap, &removed],
+    )
+    .await?;
+    let ordinal: i32 = tx.q1("select coalesce(max(ordinal) + 1, 0) from manifest_ref where snapshot_id = $1", &[&snap]).await?.get(0);
     if !added.is_empty() {
         let mid = new_id();
         let sources: Vec<Uuid> = added.iter().filter_map(|e| e.source_id).collect::<BTreeSet<_>>().into_iter().collect();

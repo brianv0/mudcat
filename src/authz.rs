@@ -248,6 +248,16 @@ pub async fn check(tx: &Tx<'_>, permission: &str, object_type: &str, id: Uuid) -
         return Ok(Decision { allow: true, reason: "system".into(), ..Default::default() });
     }
     let subj = subjects(tx).await?;
+    check_as(tx, &subj, permission, object_type, id).await
+}
+
+/// A check with the subjects of the principal already computed, for many checks in one request
+/// (a bulk check). The subjects come from the same transaction, so they are current.
+pub async fn check_as(tx: &Tx<'_>, subj: &Subjects, permission: &str, object_type: &str, id: Uuid) -> Result<Decision> {
+    unreachable(tx)?;
+    if tx.principal().is_system() {
+        return Ok(Decision { allow: true, reason: "system".into(), ..Default::default() });
+    }
     let mut d = Decision { stale_memberships: subj.stale.clone(), ..Default::default() };
     let cands = candidates(tx, permission, object_type, id).await?;
     // an exclusion on an artifact removes access that its collection gives

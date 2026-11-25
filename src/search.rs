@@ -205,6 +205,10 @@ pub async fn build(sess: &Session) -> Result<usize> {
     let mut last = pos;
     let mut entities = BTreeSet::new();
     let mut datasets = BTreeSet::new();
+    // the main transaction writes only after the workers finish, so that it holds no row lock
+    // that a worker waits for
+    let mut removed_parents: Vec<Uuid> = Vec::new();
+    let mut removed_docs: Vec<Uuid> = Vec::new();
     for r in &rows {
         last = r.get(0);
         let subject: Uuid = r.get(1);
@@ -222,11 +226,11 @@ pub async fn build(sess: &Session) -> Result<usize> {
                     entities.insert(r.get::<_, Uuid>(0));
                 }
                 if typ.starts_with("mudcat.removal") {
-                    tx.exec("delete from search_doc where index_version = $1 and parent_id = $2", &[&version, &subject]).await?;
+                    removed_parents.push(subject);
                 }
             }
             "chunk" => {
-                tx.exec("delete from search_doc where index_version = $1 and entity_id = $2", &[&version, &subject]).await?;
+                removed_docs.push(subject);
             }
             "snapshot" | "annotation-set" => {
                 if let Some(d) = data["data"]["dataset"].as_str().and_then(|s| s.parse().ok()) {
@@ -236,9 +240,28 @@ pub async fn build(sess: &Session) -> Result<usize> {
             _ => {}
         }
     }
-    for e in &entities {
-        refresh_entity(&tx, version, *e).await?;
+    // the documents are independent: build them with several workers, each in its own transaction
+    let entities: Vec<Uuid> = entities.into_iter().collect();
+    let workers = if entities.len() > 500 { 4 } else { 1 };
+    let chunk = entities.len().div_ceil(workers).max(1);
+    let mut handles = Vec::new();
+    for part in entities.chunks(chunk) {
+        let part = part.to_vec();
+        let s = sys.clone();
+        handles.push(tokio::spawn(async move {
+            let mut c = s.client().await?;
+            let tx = s.begin(&mut c).await?;
+            for e in part {
+                refresh_entity(&tx, version, e).await?;
+            }
+            tx.commit().await
+        }));
     }
+    for h in handles {
+        h.await.map_err(|e| crate::Error::invalid(e.to_string()))??;
+    }
+    tx.exec("delete from search_doc where index_version = $1 and parent_id = any($2)", &[&version, &removed_parents]).await?;
+    tx.exec("delete from search_doc where index_version = $1 and entity_id = any($2)", &[&version, &removed_docs]).await?;
     for d in &datasets {
         refresh_dataset_annotations(&tx, version, *d).await?;
     }
@@ -428,7 +451,14 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
         rank_lists.push(list);
     }
     // the filter on permissions: the ACL roots that the subject can read
+    let subj = authz::subjects(&tx).await?;
+    let coarse_reason = if subj.stale.is_empty() {
+        "the subject can read no ACL root of the document".to_string()
+    } else {
+        format!("the subject can read no ACL root of the document; synchronised membership is older than its limit: {}", Value::Array(subj.stale.clone()))
+    };
     let mut denied_by_filter = 0usize;
+    let mut coarse_denied: Vec<Value> = Vec::new();
     let roots_set: Option<HashSet<Uuid>> = roots_all.map(|r| r.into_iter().collect());
     if let Some(rs) = &roots_set {
         let ids: Vec<Uuid> = docs.keys().copied().collect();
@@ -449,7 +479,7 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
                     denied_by_filter += 1;
                     if audited < 20 {
                         audited += 1;
-                        sess.audit("search", "read", &format!("search-doc:{id}"), false, Some("the subject can read no ACL root of the document"), json!({"cached": false})).await?;
+                        coarse_denied.push(json!({"object": format!("search-doc:{id}"), "reason": coarse_reason, "cached": false}));
                     }
                 }
             }
@@ -466,7 +496,9 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
     let mut ranked: Vec<(Uuid, f64)> = score.into_iter().collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
 
-    // the check against the catalog, for each result (EV-11)
+    // the check against the catalog, for each result (EV-11), as one bulk check
+    let mut allowed_log: Vec<Value> = Vec::new();
+    let mut denied_log: Vec<Value> = coarse_denied;
     let mut hits = Vec::new();
     let mut removed = 0;
     let mut seen_parents = HashSet::new();
@@ -502,20 +534,20 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
                         v = l;
                     }
                 }
-                let d = authz::check(&tx, "read", "version", v).await?;
+                let d = authz::check_as(&tx, &subj, "read", "version", v).await?;
                 if !d.allow {
                     removed += 1;
-                    sess.audit("search", "read", &format!("version:{v}"), false, Some(&d.reason), json!({"cached": false})).await?;
+                    denied_log.push(json!({"object": format!("version:{v}"), "reason": d.reason, "cached": false}));
                     continue;
                 }
                 if !seen_parents.insert(v) {
                     continue;
                 }
-                sess.audit("search", "read", &format!("version:{v}"), true, Some("granted"), serde_json::to_value(&d)?).await?;
+                allowed_log.push(json!({"object": format!("version:{v}"), "via": d.via, "membership_age_secs": d.membership_age_secs}));
                 Hit { entity: info.artifact_id, kind: "artifact".into(), version: Some(v), path: Some(crate::namespace::version(&tx, v).await?.path), score: s, matched: if kind == "annotation" { json!({"text": doc["text"], "selector": doc["selector"], "set": doc["set"], "set_version": doc["set_version"], "annotation": id}) } else { json!({"path": doc["path"]}) } }
             }
             "dataset" => {
-                let d = authz::check(&tx, "read", "dataset", id).await.unwrap_or_default();
+                let d = authz::check_as(&tx, &subj, "read", "dataset", id).await.unwrap_or_default();
                 if !d.allow {
                     removed += 1;
                     continue;
@@ -523,7 +555,7 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
                 Hit { entity: id, kind, version: None, path: doc["path"].as_str().map(|s| s.to_string()), score: s, matched: json!({}) }
             }
             "collection" => {
-                let d = authz::check(&tx, "read", "collection", id).await.unwrap_or_default();
+                let d = authz::check_as(&tx, &subj, "read", "collection", id).await.unwrap_or_default();
                 if !d.allow {
                     removed += 1;
                     continue;
@@ -533,6 +565,15 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
             _ => continue,
         };
         hits.push(hit);
+    }
+    // the decisions of the search, in the audit log: one entry for the denials, one for the grants
+    let age = allowed_log.iter().filter_map(|a| a["membership_age_secs"].as_i64()).max();
+    if !denied_log.is_empty() {
+        let reason = denied_log[0]["reason"].as_str().unwrap_or("").to_string();
+        sess.audit("search", "read", &format!("search-results:{}", denied_log.len()), false, Some(&reason), json!({"decisions": denied_log, "cached": false})).await?;
+    }
+    if !allowed_log.is_empty() {
+        sess.audit("search", "read", &format!("search-results:{}", allowed_log.len()), true, Some("granted"), json!({"decisions": allowed_log, "membership_age_secs": age, "cached": false})).await?;
     }
     Ok(SearchResult { hits, removed_by_check: removed + denied_by_filter, ranking: "reciprocal rank fusion of lexical, tolerant (trigram) and vector ranks".into() })
 }
