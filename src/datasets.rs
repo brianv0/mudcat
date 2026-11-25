@@ -1149,3 +1149,30 @@ pub async fn restricted_view(tx: &Tx<'_>, dataset: Uuid) -> Result<Value> {
         .collect();
     Ok(json!({"dataset": dataset, "path": path, "description": desc, "embargo_until": embargo, "public_snapshots": dois}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: u128, hash: &str) -> Entry {
+        Entry { member_id: Uuid::from_u128(id), member_kind: "version".into(), member_hash: hash.into(), source_id: None, size: 1, element_count: 1 }
+    }
+
+    // The expected values come from sha256sum, not from this code:
+    //   printf 'version:00000000-0000-0000-0000-000000000001:h1' | sha256sum
+    #[test]
+    fn merkle_known_vectors() {
+        // no members: the hash of the empty string
+        assert_eq!(merkle(&[]), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        // one member: the leaf itself
+        assert_eq!(merkle(&[entry(1, "h1")]), "30d97f747bffafc6c071036474b5e0c99f8295464f3a79a48c49f744bac7db44");
+        // two members: the hash of the two leaves, joined as hex strings
+        assert_eq!(merkle(&[entry(2, "h2"), entry(1, "h1")]), "4f42b3d044af1ff882748aaf2ed57a2880163f564f430c6dd8d3753a91435766");
+        // three members: the odd last node moves up unchanged; the order of the input does not matter
+        let want = "d2091b135efa1bd8a39e8df14a6bd488625d15a5258381104023c77cbfa9a437";
+        assert_eq!(merkle(&[entry(3, "h3"), entry(1, "h1"), entry(2, "h2")]), want);
+        assert_eq!(merkle(&[entry(1, "h1"), entry(2, "h2"), entry(3, "h3")]), want);
+        // a change of one member hash changes the root
+        assert_ne!(merkle(&[entry(1, "h1"), entry(2, "h2"), entry(3, "h4")]), want);
+    }
+}

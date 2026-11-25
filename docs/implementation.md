@@ -57,6 +57,17 @@ mudcat does not store data, so the evals need a world around it. These parts are
 - **Format plugins.** Simulated files carry a one-line header that stands in for the index of a real format.
 - **Embeddings.** A hashed bag of words and trigrams, with a model version, in place of an embedding model; vector similarity is computed in Rust, because pgvector is not installed in this environment.
 
+## The Merkle hash of a snapshot
+
+`datasets::merkle` gives the hash of a published snapshot (ID-5). The algorithm is fixed, so that anyone can compute it again from the members:
+
+1. The leaf of a member is the SHA-256 (as lowercase hex) of the text `kind:member_id:member_hash`. The kind is `version` or `snapshot`; the member ID is the UUID in its hyphenated lowercase form; the member hash is the content hash of a version, or the Merkle hash of a published snapshot.
+2. The leaves are sorted by member ID.
+3. A level is reduced to the next one in pairs from the left: a pair becomes the SHA-256 (hex) of the two hex strings joined with nothing between them. An odd last node moves up unchanged. This repeats until one node is left, which is the hash.
+4. A snapshot with no members has the SHA-256 (hex) of the empty string.
+
+The unit test in `datasets.rs` has vectors that were computed with `sha256sum`. INV-2 in `src/evals/invariants.rs` computes the hash of each recorded published snapshot again with its own code, from the members in the catalog, and compares it with the stored hash.
+
 ## Decisions where the documents were silent
 
 The evals contain decisions that the design documents do not state (evals/README.md lists some). The implementation makes these choices:

@@ -29,6 +29,12 @@ pub async fn check(ctx: &mut Ctx, id: &str) -> Result<(bool, String)> {
                 if now_members != members || now_hash != hash {
                     return Ok((false, format!("snapshot {snap} changed: members {} -> {}, hash {} -> {}", members.len(), now_members.len(), hash, now_hash)));
                 }
+                // the hash again, from the members, with code that does not call datasets::merkle (ID-5)
+                let entries: Vec<(Uuid, String, String)> = in_tx!(sys, |tx| crate::datasets::members(&tx, snap).await?.into_iter().map(|e| (e.member_id, e.member_kind, e.member_hash)).collect());
+                let again = merkle_again(&entries);
+                if again != hash {
+                    return Ok((false, format!("snapshot {snap}: the recorded Merkle hash {hash} differs from the hash computed again from its members, {again}")));
+                }
             }
             Ok((true, String::new()))
         }
@@ -333,4 +339,30 @@ pub async fn check(ctx: &mut Ctx, id: &str) -> Result<(bool, String)> {
         }
         other => Ok((false, format!("unknown invariant {other}"))),
     }
+}
+
+/// The Merkle hash of a snapshot, computed again from (member ID, kind, member hash), as
+/// docs/implementation.md states it. It shares no code with `datasets::merkle`.
+fn merkle_again(members: &[(Uuid, String, String)]) -> String {
+    use sha2::{Digest, Sha256};
+    let hex_sha = |s: &str| -> String { Sha256::digest(s.as_bytes()).iter().map(|b| format!("{b:02x}")).collect() };
+    let mut sorted: Vec<&(Uuid, String, String)> = members.iter().collect();
+    sorted.sort_by_key(|m| m.0);
+    let mut level: Vec<String> = sorted.iter().map(|(id, kind, h)| hex_sha(&format!("{kind}:{id}:{h}"))).collect();
+    if level.is_empty() {
+        return hex_sha("");
+    }
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len() / 2 + 1);
+        let mut i = 0;
+        while i + 1 < level.len() {
+            next.push(hex_sha(&format!("{}{}", level[i], level[i + 1])));
+            i += 2;
+        }
+        if i < level.len() {
+            next.push(level[i].clone());
+        }
+        level = next;
+    }
+    level.remove(0)
 }
