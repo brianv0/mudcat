@@ -1,7 +1,9 @@
 {
   "host": {
     "cpus": 4,
-    "seconds": 3082.378459645
+    "memory_gb": 15,
+    "postgres": "16.15",
+    "note": "one machine: the benchmark, PostgreSQL and the storage simulation share 4 CPUs"
   },
   "results": [
     {
@@ -13,7 +15,8 @@
         "seconds": 92.799887182,
         "versions": 250000,
         "versions_per_minute": 161638
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "bulk registration, 4 workers, batch 1000",
@@ -24,7 +27,8 @@
         "seconds": 29.068080771,
         "versions": 250000,
         "versions_per_minute": 516029
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "bulk registration, 8 workers, batch 5000",
@@ -35,7 +39,8 @@
         "seconds": 33.54132239,
         "versions": 250000,
         "versions_per_minute": 447209
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "bulk registration, 16 workers, batch 5000",
@@ -46,7 +51,8 @@
         "seconds": 141.825459745,
         "versions": 1000000,
         "versions_per_minute": 423055
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "repeated registration of 5000 (idempotent)",
@@ -54,7 +60,8 @@
       "result": {
         "new_versions": 0,
         "seconds": 0.661839649
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "change stream relay (outbox -> positions)",
@@ -63,7 +70,8 @@
         "events": 3000137,
         "events_per_second": 18656,
         "seconds": 160.807458443
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "change stream poll (pages of 10000)",
@@ -72,7 +80,8 @@
         "events": 3000137,
         "events_per_second": 13265,
         "seconds": 226.16876587
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "commit to visible in the change stream",
@@ -80,7 +89,8 @@
       "result": {
         "p50": "30.0 ms",
         "p95": "39.7 ms"
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "metadata payloads and typed index (setup)",
@@ -88,167 +98,183 @@
       "result": {
         "seconds": 35.255286156,
         "versions": 1000020
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "query first page: path glob only",
       "requirement": "PF-4",
       "result": {
-        "max": "8341.1 ms",
-        "p50": "2486.7 ms",
+        "max": "15.1 ms",
+        "p50": "4.6 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: column: size > 6200",
       "requirement": "PF-4",
       "result": {
-        "max": "1877.3 ms",
-        "p50": "1373.1 ms",
+        "max": "359.5 ms",
+        "p50": "291.8 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: indexed: run > 990 and status = valid",
       "requirement": "PF-4",
       "result": {
-        "max": "5331.2 ms",
-        "p50": "192.4 ms",
+        "max": "3400.9 ms",
+        "p50": "219.6 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: indexed, unselective: run > 10",
       "requirement": "PF-4",
       "result": {
-        "max": "6194.3 ms",
-        "p50": "5671.0 ms",
+        "max": "55.9 ms",
+        "p50": "31.7 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: declared, not indexed: energy > 140",
       "requirement": "PF-4",
       "result": {
-        "max": "8173.5 ms",
-        "p50": "7546.3 ms",
+        "max": "78.9 ms",
+        "p50": "57.9 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: undeclared equality (GIN): detector = d3",
       "requirement": "PF-4",
       "result": {
-        "max": "7909.3 ms",
-        "p50": "7167.3 ms",
+        "max": "56.3 ms",
+        "p50": "41.9 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: glob on names: name =~ f0000*",
       "requirement": "PF-4",
       "result": {
-        "max": "333.9 ms",
-        "p50": "248.9 ms",
+        "max": "7.3 ms",
+        "p50": "6.0 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "query first page: policy predicate: permitted(train, research)",
       "requirement": "PF-4",
       "result": {
-        "max": "435.2 ms",
-        "p50": "27.3 ms",
+        "max": "55.3 ms",
+        "p50": "36.8 ms",
         "rows": 100,
         "versions": 1000020
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "commit, 1 writers, add-only, branch requirement",
       "requirement": "PF-5",
       "result": {
         "commits": 40,
-        "commits_per_second": 43,
-        "p50": "23.1 ms",
-        "p95": "36.3 ms",
-        "p99": "39.3 ms",
+        "commits_per_second": 74,
+        "p50": "13.2 ms",
+        "p95": "17.0 ms",
+        "p99": "18.2 ms",
         "retries": 0
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "commit, 1 writers, with requirement on the snapshot",
       "requirement": "PF-5",
       "result": {
         "commits": 40,
-        "commits_per_second": 30,
-        "p50": "29.7 ms",
-        "p95": "42.1 ms",
-        "p99": "84.8 ms",
+        "commits_per_second": 69,
+        "p50": "14.1 ms",
+        "p95": "19.3 ms",
+        "p99": "20.2 ms",
         "retries": 0
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "commit, 8 writers, add-only, branch requirement",
       "requirement": "PF-5",
       "result": {
         "commits": 320,
-        "commits_per_second": 14,
-        "p50": "538.7 ms",
-        "p95": "745.7 ms",
-        "p99": "788.5 ms",
+        "commits_per_second": 29,
+        "p50": "228.1 ms",
+        "p95": "529.4 ms",
+        "p99": "630.2 ms",
         "retries": 0
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "commit, 8 writers, with requirement on the snapshot",
       "requirement": "PF-5",
       "result": {
         "commits": 320,
-        "commits_per_second": 11,
-        "p50": "253.1 ms",
-        "p95": "2102.5 ms",
-        "p99": "3767.1 ms",
-        "retries": 1864
-      }
+        "commits_per_second": 15,
+        "p50": "148.2 ms",
+        "p95": "2341.0 ms",
+        "p99": "4277.6 ms",
+        "retries": 2051
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "commit, 32 writers, add-only, branch requirement",
       "requirement": "PF-5",
       "result": {
         "commits": 320,
-        "commits_per_second": 12,
-        "p50": "2513.4 ms",
-        "p95": "2808.2 ms",
-        "p99": "2915.5 ms",
+        "commits_per_second": 70,
+        "p50": "431.2 ms",
+        "p95": "585.2 ms",
+        "p99": "629.7 ms",
         "retries": 0
-      }
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "commit, 32 writers, with requirement on the snapshot",
       "requirement": "PF-5",
       "result": {
         "commits": 320,
-        "commits_per_second": 9,
-        "p50": "1671.4 ms",
-        "p95": "9677.9 ms",
-        "p99": "15365.3 ms",
-        "retries": 6872
-      }
+        "commits_per_second": 28,
+        "p50": "511.4 ms",
+        "p95": "2996.2 ms",
+        "p99": "5437.5 ms",
+        "retries": 6820
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "publish (Merkle hash over members)",
       "requirement": "ID-5",
       "result": {
         "members": 4200,
-        "seconds": 0.042584345
-      }
+        "seconds": 0.037518391
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "resolve a snapshot of 10000 members (train, research)",
@@ -257,7 +283,8 @@
         "p50": "418.4 ms",
         "per_member_us": 41.8364581,
         "tasks": 10000
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "resolve 10000 members with 1000 invalidations",
@@ -265,7 +292,8 @@
       "result": {
         "seconds": 0.320556919,
         "tasks": 9000
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "permitted(train, research) on a snapshot of 10000",
@@ -274,7 +302,8 @@
         "cache_lookup_p50": "1.2 ms",
         "cache_refresh": "16.9 ms",
         "reads_members": false
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "resolve a snapshot of 100000 members (train, research)",
@@ -283,7 +312,8 @@
         "p50": "2808.8 ms",
         "per_member_us": 28.087711669999997,
         "tasks": 100000
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "resolve 100000 members with 1000 invalidations",
@@ -291,7 +321,8 @@
       "result": {
         "seconds": 2.676251996,
         "tasks": 99000
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "permitted(train, research) on a snapshot of 100000",
@@ -300,99 +331,111 @@
         "cache_lookup_p50": "1.4 ms",
         "cache_refresh": "152.7 ms",
         "reads_members": false
-      }
+      },
+      "run": "first full run"
     },
     {
       "benchmark": "ancestors of a model, depth limit 10",
       "requirement": "PF-6",
       "result": {
-        "nodes": 2,
-        "p50": "8.2 ms"
-      }
+        "nodes": "limit error (PF-7)",
+        "p50": "41.7 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "ancestors of a model, depth limit 50",
       "requirement": "PF-6",
       "result": {
-        "nodes": 2,
-        "p50": "5.9 ms"
-      }
+        "nodes": "limit error (PF-7)",
+        "p50": "146.8 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "ancestors of a model, depth limit 200",
       "requirement": "PF-6",
       "result": {
-        "nodes": 2,
-        "p50": "6.6 ms"
-      }
+        "nodes": "limit error (PF-7)",
+        "p50": "567.5 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "ancestors of a model, depth limit 400",
       "requirement": "PF-6",
       "result": {
-        "nodes": 2,
-        "p50": "6.7 ms"
-      }
+        "nodes": 402,
+        "p50": "573.3 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "ancestors with a node limit of 100",
       "requirement": "PF-7",
       "result": {
-        "error": null,
-        "seconds": 0.007314558
-      }
+        "error": "lineage-limit: the traversal passes its limit of 100 nodes; mudcat returns no partial result",
+        "seconds": 0.14089435
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "models that used a source (QY-1)",
       "requirement": "QY-1",
       "result": {
         "models": 17,
-        "seconds": 0.051243722
-      }
+        "seconds": 0.034389561
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "search index build from the change stream",
       "requirement": "OP-2",
       "result": {
         "documents": 50000,
-        "documents_per_second": 100,
-        "seconds": 499.559924649
-      }
+        "documents_per_second": 419,
+        "seconds": 119.271853146
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "search: exact words (50000 documents)",
       "requirement": "EV-9",
       "result": {
         "hits": 20,
-        "p50": "909.2 ms",
-        "p95": "1000.4 ms"
-      }
+        "p50": "349.6 ms",
+        "p95": "402.0 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "search: one spelling error (50000 documents)",
       "requirement": "EV-9",
       "result": {
         "hits": 20,
-        "p50": "876.2 ms",
-        "p95": "1093.3 ms"
-      }
+        "p50": "309.0 ms",
+        "p95": "388.1 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "search: three words (50000 documents)",
       "requirement": "EV-9",
       "result": {
         "hits": 20,
-        "p50": "951.0 ms",
-        "p95": "1018.2 ms"
-      }
+        "p50": "341.9 ms",
+        "p95": "362.6 ms"
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "search index rebuild (new version, then switch)",
       "requirement": "OP-3",
       "result": {
         "documents": 50000,
-        "seconds": 459.830372674
-      }
+        "seconds": 404.022668255
+      },
+      "run": "after the optimisations"
     },
     {
       "benchmark": "move a tenant to a dedicated database",
@@ -402,7 +445,8 @@
         "rows_per_second": 32461,
         "seconds": 369.688630225,
         "versions": 1000000
-      }
+      },
+      "run": "first full run"
     }
   ]
 }

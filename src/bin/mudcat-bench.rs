@@ -479,6 +479,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(t) = a.queries_on {
         let s = b.inst.session(t, Principal::user("admin"));
         queries_run(&mut b, &s).await?;
+        std::fs::write(&a.out, serde_json::to_string_pretty(&json!({"results": b.results}))?)?;
         return Ok(());
     }
     if run("registration") || run("queries") {
