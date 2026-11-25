@@ -146,6 +146,12 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
+        if consumer_state == "stops-and-restarts" && !restart_seen {
+            // the writers finished first: the consumer stops now, and starts again from its stored position
+            restart_seen = true;
+            consumer.position = stored.saturating_sub(5).max(0);
+            consumer.max_seen = consumer.position;
+        }
     }
     for h in handles {
         h.await.map_err(|e| Error::invalid(e.to_string()))??;
