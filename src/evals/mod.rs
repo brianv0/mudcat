@@ -114,8 +114,37 @@ pub struct Ctx {
 pub enum Scale {
     /// The values of the templates, as they are.
     Full,
-    /// Large cover values are capped, to make a fast run.
+    /// Large cover values are capped at 2000, to make a fast run.
     Quick,
+    /// Cover values are capped at 50 and the sizes that drivers hard-code get smaller in the same
+    /// way: the whole suite runs in about two minutes in a debug build.
+    Smoke,
+}
+
+impl Scale {
+    pub fn parse(s: &str) -> Option<Scale> {
+        match s {
+            "full" => Some(Scale::Full),
+            "quick" => Some(Scale::Quick),
+            "smoke" => Some(Scale::Smoke),
+            _ => None,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Scale::Full => "full",
+            Scale::Quick => "quick",
+            Scale::Smoke => "smoke",
+        }
+    }
+    /// A size that a driver hard-codes for the full scale: `full` as it is, and a cap for the others.
+    pub fn size(self, full: usize, quick: usize, smoke: usize) -> usize {
+        match self {
+            Scale::Full => full,
+            Scale::Quick => full.min(quick),
+            Scale::Smoke => full.min(smoke),
+        }
+    }
 }
 
 impl Ctx {
@@ -128,6 +157,7 @@ impl Ctx {
         match self.scale {
             Scale::Full => v,
             Scale::Quick => v.min(2000),
+            Scale::Smoke => v.min(50),
         }
     }
     pub fn is(&self, k: &str, v: &str) -> bool {

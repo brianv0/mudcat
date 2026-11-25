@@ -1,6 +1,6 @@
 //! Run the evals: every variant of every task template, with the invariants.
 //!
-//! Usage: mudcat-evals [--template T1.1] [--variant T1.1#003] [--scale full|quick] [--jobs N]
+//! Usage: mudcat-evals [--template T1.1] [--variant T1.1#003] [--scale full|quick|smoke] [--jobs N]
 
 use clap::Parser;
 use mudcat::evals::{self, Scale, VariantResult};
@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     if !a.variant.is_empty() {
         variants.retain(|v| a.variant.contains(&v.id));
     }
-    let scale = if a.scale == "quick" { Scale::Quick } else { Scale::Full };
+    let scale = Scale::parse(&a.scale).ok_or_else(|| anyhow::anyhow!("unknown scale {:?}: full, quick or smoke", a.scale))?;
     let inst = Instance::open(&a.db, &a.data).await?;
     let work = std::path::PathBuf::from(&a.data).join("work");
     let sem = Arc::new(tokio::sync::Semaphore::new(a.jobs));

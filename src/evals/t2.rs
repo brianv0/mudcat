@@ -143,7 +143,8 @@ pub async fn leakage_check(ctx: &mut Ctx) -> Result<()> {
     let (model, _, _) = training_model(ctx, "/t/training", "/models/m1").await?;
     // evaluation datasets: the named one with {related} related elements, and a distractor with 900
     for (ds, n, rel, salt) in [("/t/eval", 10_000usize, related, "e"), ("/t/eval2", 1000usize, 900usize, "x")] {
-        let n = if ctx.scale == super::Scale::Quick { n.min(2000) } else { n };
+        // the named dataset must hold the largest `related` value of the template (500)
+        let n = ctx.scale.size(n, 2000, 600);
         let regs: Vec<Register> = (0..n)
             .map(|j| {
                 let is_rel = j < rel;

@@ -75,7 +75,7 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
     let writers = ctx.n("writers") as usize;
     let consumer_state = ctx.p("consumer");
     let rollbacks = ctx.is("rollbacks", "some");
-    let total: usize = if ctx.scale == super::Scale::Quick { 2000 } else { 10_000 };
+    let total: usize = ctx.scale.size(10_000, 2000, 1000);
     let admin = ctx.admin.clone();
     in_tx!(admin, |tx| namespace::ensure_collection(&mut tx, "/docs").await?);
     let per_writer = total / writers;
