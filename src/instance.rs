@@ -76,6 +76,35 @@ impl Default for Config {
     }
 }
 
+/// A stop in a tenant move, for tests of the write fence: the mover holds the fence and has not
+/// started to copy. A test waits for `reached`, makes its checks, and calls `resume`.
+pub struct MovePause {
+    reached: tokio::sync::Semaphore,
+    resume: tokio::sync::Semaphore,
+}
+
+impl MovePause {
+    pub fn new() -> Arc<MovePause> {
+        Arc::new(MovePause { reached: tokio::sync::Semaphore::new(0), resume: tokio::sync::Semaphore::new(0) })
+    }
+    /// Returns when a mover is at the stop.
+    pub async fn reached(&self) {
+        if let Ok(p) = self.reached.acquire().await {
+            p.forget();
+        }
+    }
+    /// Lets the mover continue (also one that gets to the stop later).
+    pub fn resume(&self) {
+        self.resume.add_permits(1);
+    }
+    pub(crate) async fn stop_here(&self) {
+        self.reached.add_permits(1);
+        if let Ok(p) = self.resume.acquire().await {
+            p.forget();
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TenantInfo {
     pub id: Uuid,
@@ -154,6 +183,8 @@ pub struct Instance {
     pub authz_unreachable: AtomicBool,
     /// When set, a tenant move fails after this fraction of the tables (fault injection).
     pub move_fault_at: RwLock<Option<f64>>,
+    /// A stop in a tenant move, for tests (see [`MovePause`]).
+    pub move_pause: RwLock<Option<Arc<MovePause>>>,
 }
 
 pub fn make_pool(url: &str, size: usize) -> Result<Pool> {
@@ -202,6 +233,7 @@ impl Instance {
             idp: IdentityProviders::default(),
             authz_unreachable: AtomicBool::new(false),
             move_fault_at: RwLock::new(None),
+            move_pause: RwLock::new(None),
         };
         inst.load_tenants().await?;
         Ok(Arc::new(inst))
@@ -227,6 +259,7 @@ impl Instance {
             idp: IdentityProviders::default(),
             authz_unreachable: AtomicBool::new(false),
             move_fault_at: RwLock::new(None),
+            move_pause: RwLock::new(None),
         })
     }
 
@@ -260,6 +293,10 @@ impl Instance {
 
     pub fn tenant_by_endpoint(&self, endpoint: &str) -> Option<TenantInfo> {
         self.tenants.read().values().find(|t| t.endpoint == endpoint).cloned()
+    }
+
+    pub async fn find_tenant_by_endpoint(&self, endpoint: &str) -> Result<Option<TenantInfo>> {
+        Ok(self.tenant_by_endpoint(endpoint))
     }
 
     pub fn tenant_by_name(&self, name: &str) -> Option<TenantInfo> {

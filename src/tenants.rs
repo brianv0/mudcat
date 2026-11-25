@@ -81,6 +81,10 @@ pub async fn move_tenant(inst: &Arc<Instance>, tenant: Uuid, to_db: &str) -> Res
     // wait for the write transactions of the tenant that passed the fence before the move
     let fence = source.get().await?;
     fence.execute("select pg_advisory_lock(hashtextextended($1, 11))", &[&tenant.to_string()]).await?;
+    let pause = inst.move_pause.read().clone();
+    if let Some(p) = pause {
+        p.stop_here().await;
+    }
     let fault = *inst.move_fault_at.read();
     let result = copy_tenant(inst, tenant, &source, &target, fault).await;
     let unlock = |fence: deadpool_postgres::Object| async move {
@@ -107,7 +111,7 @@ pub async fn move_tenant(inst: &Arc<Instance>, tenant: Uuid, to_db: &str) -> Res
                 tx.execute("delete from tenant where id = $1", &[&tenant]).await?;
             }
             tx.commit().await?;
-            Ok(json!({"tenant": tenant, "from": from, "to": to_db, "rows": stats}))
+            Ok(json!({"tenant": tenant, "from": from, "to": to_db, "rows": stats, "source_cleanup": "done"}))
         }
     }
 }
