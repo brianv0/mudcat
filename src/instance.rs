@@ -426,6 +426,10 @@ impl<'a> Tx<'a> {
             return Ok(c);
         }
         let tenant = self.sess.tenant_id()?;
+        // during a move, refuse at once; the client tries again
+        if self.sess.inst.tenant(tenant).map(|t| t.status == "moving").unwrap_or(false) {
+            return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
+        }
         // the fence of a tenant move: writers hold a shared lock; the move takes it exclusively
         let db: String = self
             .t
