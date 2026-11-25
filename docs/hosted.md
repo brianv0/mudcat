@@ -11,7 +11,7 @@ mudcat is already outside the read path, so it splits well into two planes:
 
 | Plane | Components |
 |---|---|
-| Control plane (vendor) | API gateway, catalog API, query compiler, resolver, policy engine, pinning service, authorization port, ingest writer, catalog database, background workers, gateways, hosted MCP server, web UI |
+| Control plane (vendor) | API gateway, catalog API, query compiler, resolver, policy engine, authorization port, ingest writer, catalog database, background workers, gateways, hosted MCP server, web UI |
 | Data plane (customer) | Site agents, format plugins, movers, compaction compute, and optionally a customer gateway with a metadata store |
 
 Format plugins run inside site agents. Thus extraction, fingerprinting and checksum verification happen next to the data, and only their results go to the control plane.
@@ -28,8 +28,8 @@ users: "Users and agents\nSDK · CLI · web UI · notebooks · MCP clients"
 
 vendor: Vendor control plane (one region) {
   front: "API gateway\ncustomer IdP through OIDC · SCIM groups"
-  services: "Catalog services\ncatalog API · query · resolver · policy · pinning · authorization port · ingest writer"
-  tenants: "Tenant catalogs\none PostgreSQL database for each zone" {
+  services: "Catalog services\ncatalog API · query · resolver · policy · authorization port · ingest writer"
+  tenants: "Tenant catalogs\none PostgreSQL database for each instance" {
     shape: cylinder
   }
   workers: "Background workers\nindexes · lineage · maintenance · placement · deletion"
@@ -67,7 +67,7 @@ vendor.services -> customer.broker: split queries · policy checks (gateway conn
 
 ## Credentials for storage
 
-The resolver must give clients credentials, but the customer must keep control of their storage. There are three modes, and each zone selects one:
+The resolver must give clients credentials, but the customer must keep control of their storage. There are three modes, and each instance selects one:
 
 | Mode | How the resolver gets credentials | Vendor access to bytes |
 |---|---|---|
@@ -79,18 +79,18 @@ The **credential broker** mode is the "no data access" mode. Regulated customers
 
 ## Tenancy
 
-A **tenant** is a customer organisation. A tenant has one or more zones. The zone is the unit of isolation, because the model already uses zones as the unit of authority and federation.
+A **tenant** is a customer organisation. A tenant has one or more instances. An instance is a logical catalog, not a deployment: one control plane serves many instances. The instance is the unit of isolation, because the model already uses instances as the unit of authority and federation.
 
 | Tier | Isolation | For |
 |---|---|---|
-| Shared | One PostgreSQL database for each zone, on shared database clusters; shared stateless services | Small teams, trials |
+| Shared | One PostgreSQL database for each instance, on shared database clusters; shared stateless services | Small teams, trials |
 | Dedicated | A dedicated database cluster and dedicated workers for the tenant, in the vendor's account | Large or regulated tenants |
 | Customer cloud (BYOC) | The vendor operates the control plane inside the customer's own cloud account | Customers who must keep metadata in their own account |
 | Self-hosted | The customer runs the open-source release | Facilities with their own operations staff |
 
 The same code runs in all four tiers. Only the deployment differs.
 
-A database for each zone has these advantages over rows of several tenants in one database:
+A database for each instance has these advantages over rows of several tenants in one database:
 
 - **Recovery:** backup, point-in-time recovery and restore apply to one tenant.
 - **Migrations:** schema migrations can be applied to one tenant at a time, with canaries.
@@ -98,7 +98,7 @@ A database for each zone has these advantages over rows of several tenants in on
 - **Keys:** customer-managed encryption keys apply to one database.
 - **Limits:** a tenant's rows cannot appear in another tenant's queries, even if the application has an error.
 
-Very small zones can share a database, with one schema for each zone. Larger tenants move to their own database without a change to the application.
+Very small instances can share a database, with one schema for each instance. Larger tenants move to their own database without a change to the application.
 
 ## Metadata that the customer controls
 
@@ -117,7 +117,7 @@ Each attribute definition has a **custody level**. The custody level sets where 
 
 | Custody level | Where values are | What the control plane can do |
 |---|---|---|
-| **Vendor-held** | The zone's database in the control plane | Everything: queries, sorts, facets, policy evaluation |
+| **Vendor-held** | The instance's database in the control plane | Everything: queries, sorts, facets, policy evaluation |
 | **Customer-encrypted** | The control plane stores ciphertext. Only the customer holds the key | Equality queries through a **blind index**: a keyed hash of each value, which the customer gateway computes. No range queries, sorts or full-text search. The control plane cannot read the values |
 | **Customer-held** | A metadata store in the customer's data plane, behind the customer gateway | Nothing directly. The control plane stores only the fact that the attribute exists for an entity |
 
@@ -142,25 +142,25 @@ The gateway runs next to the customer's metadata store, and holds the customer's
 
   The control plane then joins the two results by identifier. The gateway never returns values, only identifiers. For customer-encrypted attributes, the gateway computes the blind-index value of the query literal, and the control plane matches it.
 - **The web UI.** The browser gets customer-held values directly from the customer gateway, with the user's own token, and shows them next to the rest of the page. The values never pass through the vendor.
-- **Usage policy.** Some policy decisions depend on customer-held values, for example consent status at pinning. For these, the pinning service sends the identifiers and the condition to the customer gateway. The gateway returns the decision and a signature. mudcat records the decision and the signature in the policy decision of the pinned specification, but not the values.
+- **Usage policy.** Some policy decisions depend on customer-held values, for example consent status at resolution. For these, the policy engine sends the identifiers and the condition to the customer gateway. The gateway returns the decision and a signature. mudcat records the decision and the signature in the policy decision of the resolution, but not the values.
 - **Search indexes.** The control plane's search and vector indexes contain only vendor-held attributes. A customer can run an index of its own behind the gateway. The query compiler then sends text predicates on customer-held fields to it.
-- **Availability.** If the customer gateway is not available, mudcat rejects queries and pinnings that need customer-held metadata. Queries that do not need it continue to work.
+- **Availability.** If the customer gateway is not available, mudcat rejects queries and resolutions that need customer-held metadata. Queries that do not need it continue to work.
 
 ### Federation as an alternative
 
-A customer that wants to hold much of its metadata can run a small self-hosted zone for it, and federate it with its hosted zones. This uses the normal federation rules: each zone makes the decisions about the data that it owns. Custody levels are better when only a few attributes are sensitive. A federated zone is better when whole datasets are sensitive.
+A customer that wants to hold much of its metadata can run a small self-hosted instance for it, and federate it with its hosted instances. This uses the normal federation rules: each instance makes the decisions about the data that it owns. Custody levels are better when only a few attributes are sensitive. A federated instance is better when whole datasets are sensitive.
 
 ## Regions and residency
 
-- **One region for each zone.** Each zone is pinned to one region of the control plane. Metadata can be sensitive (file names, sources, consent status), so metadata residency matters as much as data residency.
-- **Regional control planes.** The vendor runs one control plane in each region it offers. A tenant with zones in several regions links them through the normal federation feed, as independent zones.
-- **Global data.** Only account data (tenants, billing, the list of zones and their regions) is global.
+- **One region for each instance.** Each instance is pinned to one region of the control plane. Metadata can be sensitive (file names, sources, consent status), so metadata residency matters as much as data residency.
+- **Regional control planes.** The vendor runs one control plane in each region it offers. A tenant with instances in several regions links them through the normal federation feed, as independent instances.
+- **Global data.** Only account data (tenants, billing, the list of instances and their regions) is global.
 
 ## Derived state
 
 - **Manifests.** By default, the control plane stores manifests in a per-tenant store, encrypted with the tenant's key. A tenant can instead give a bucket in its own account. Manifests list file names and element metadata, so some tenants will want them in their own account.
 - **Indexes.** Search, vector and identity indexes are per tenant: separate indexes on shared clusters for the shared tier, dedicated clusters above that.
-- **Authorization.** The built-in adapter keeps relationships in the zone's database. A tenant can instead connect its own SpiceDB or OpenFGA service, self-hosted or managed, through the authorization port.
+- **Authorization.** The built-in adapter keeps relationships in the instance's database. A tenant can instead connect its own SpiceDB or OpenFGA service, self-hosted or managed, through the authorization port.
 
 ## Fairness and limits
 
@@ -171,9 +171,9 @@ A customer that wants to hold much of its metadata can run a small self-hosted z
 ## Operations
 
 - **Upgrades:** online schema migrations, applied tenant by tenant, with canary tenants first.
-- **Backups:** point-in-time recovery for each zone database. Restore tests run on a schedule.
+- **Backups:** point-in-time recovery for each instance database. Restore tests run on a schedule.
 - **Audit:** each tenant can stream its audit log to its own security tools.
-- **Exit:** a tenant can export a full zone at any time. The export contains a database dump in the format of the open-source release, the manifests and a JSON-LD export. A tenant can thus move to self-hosting without loss.
+- **Exit:** a tenant can export a full instance at any time. The export contains a database dump in the format of the open-source release, the manifests and a JSON-LD export. A tenant can thus move to self-hosting without loss.
 
 ## What to charge for
 
@@ -189,5 +189,5 @@ The vendor does not hold the data, so the price should not depend on data volume
 
 - **Trust in credential vending.** The delegated-role mode gives the vendor a path to customer bytes. The credential broker removes this path, but adds a component that the customer must run.
 - **Latency for HPC.** HPC jobs that resolve names at start-up depend on the control plane's availability. Resolved manifests and credentials that jobs can cache for their lifetime reduce this dependency.
-- **Enclaves.** Some enclaves permit no outbound connection. Their agents need an approved relay, or the enclave runs a self-hosted zone that federates with the hosted zones.
-- **Many databases.** One database for each zone means many databases to operate. Shared clusters and automation keep this practical, but it needs investment early.
+- **Enclaves.** Some enclaves permit no outbound connection. Their agents need an approved relay, or the enclave runs a self-hosted instance that federates with the hosted instances.
+- **Many databases.** One database for each instance means many databases to operate. Shared clusters and automation keep this practical, but it needs investment early.

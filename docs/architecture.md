@@ -7,7 +7,7 @@ Status: sketch. This document describes the components, where state lives and th
 | Requirement | Consequence | Requirement IDs |
 |---|---|---|
 | 10^4–10^9 catalog entities, up to ~10^11 elements | Elements live in columnar manifests, not in the catalog database | PF-1, PF-2 |
-| Data in several clouds, HPC centres and enclaves | Federated zones; storage resources with jurisdiction and egress attributes; site agents near the data | RD-4, PL-2, PL-3, PL-4 |
+| Data in several clouds, HPC centres and enclaves | Federated instances; storage resources with jurisdiction and egress attributes; site agents near the data | RD-4, PL-2, PL-3, PL-4 |
 | Training reads at GPU-cluster rates | The catalog never proxies reads; it issues resolved manifests and credentials once per job | RD-1, RD-2, RD-3 |
 | Small teams must be able to run it | PostgreSQL is the only necessary dependency; every other index is optional and rebuildable | OP-1, OP-2, AC-2 |
 | Mixed data structures | Format plugins produce structure descriptors; selectors address parts without enumeration | ST-1, ST-4, ST-5 |
@@ -19,7 +19,7 @@ Status: sketch. This document describes the components, where state lives and th
 
 | Plane | Holds | Technology | Source of truth? |
 |---|---|---|---|
-| Catalog database | Zones, collections, artifacts, versions, replicas, storage resources, datasets, snapshots, sources, policies, specifications, activities and their qualified relations, ACLs | PostgreSQL | Yes |
+| Catalog database | Instances, collections, artifacts, versions, replicas, storage resources, datasets, snapshots, sources, policies, resolutions, activities and their qualified relations, ACLs | PostgreSQL | Yes |
 | Manifests and run records | Element lists, annotation sets, run-record bundles | Parquet or Lance files in object storage, each registered as a version | Yes, and immutable |
 | Derived indexes | Full-text and faceted search, vector search, content-identity index, similarity tables, effective-policy cache | PostgreSQL full-text search and pgvector by default; OpenSearch and columnar index files optionally | No; rebuildable |
 | Data | The bytes | Object storage, HPC file systems, tape | Outside mudcat |
@@ -38,18 +38,17 @@ direction: down
 
 clients: "Clients\nPython SDK · CLI · web UI · data loaders · notebooks · agents (MCP)"
 
-zone: mudcat zone {
+instance: mudcat instance {
   gateway: "API gateway (OIDC, tokens)"
   gateways: "Gateways\nIceberg REST · DCAT, Croissant, RO-Crate export · MCP server\nfsspec · federation feed · field gateways (fields.md)"
 
   services: Services {
-    grid-columns: 4
+    grid-columns: 3
     api: Catalog API
     query: Query compiler
     resolver: Resolver
     policy: Policy engine
     ingest: "Ingest writer\n(batched)"
-    pinning: Pinning service
     authz: "Authorization port\n(built-in, or SpiceDB · OpenFGA)"
   }
 
@@ -77,8 +76,8 @@ agents: "Site agents (one or more per storage resource)\nextract · fingerprint 
 storage: "Storage\nbuckets · HPC file systems · tape · enclaves\nclients read it directly, with issued credentials"
 movers: "Movers\nFTS3 · Globus · rclone · cloud replication · Pelican"
 
-clients -> zone.gateway
-zone.consumers -> agents: tasks
+clients -> instance.gateway
+instance.consumers -> agents: tasks
 agents -> movers
 agents -> storage
 movers -> storage
@@ -133,14 +132,14 @@ The catalog database is PostgreSQL with one schema per model area: namespace and
 - **Identifiers:** UUIDv7 primary keys for every entity, versions and snapshots included. They keep index locality for time-ordered inserts (the Butler also made this change). The embedded timestamp is not a privacy risk, because the access model controls who can see an identifier. A separate table holds aliases, with a unique index per scheme.
 - **Paths:** the catalog stores paths as materialised paths in `ltree`, so it evaluates path globs and ACL inheritance in SQL. This removes Datacat's Java tree walk and its temporary tables.
 - **Metadata:** the catalog stores metadata as JSONB documents. It promotes declared attributes to typed, indexed columns. GIN indexes serve equality and containment queries. Range queries and sorts need the promoted columns.
-- **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by zone and namespace.
+- **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by instance and namespace.
 - **Outbox:** every transaction appends its changes to an outbox table. A relay publishes these changes as CloudEvents.
 
 mudcat produces RDF from this schema through a declared mapping and the JSON-LD context. A triple store is optional, and mudcat uses it only for export.
 
 ### Format plugins and site agents
 
-**Format plugins** are augmenters (model, section 3) that read the bytes. They read a version's header or index and produce:
+**Format plugins** are enrichers (model, section 3) that read the bytes. They read a version's header or index and produce:
 
 - a structure descriptor;
 - extracted metadata;
@@ -163,34 +162,34 @@ Agent tasks:
 
 Agents report results through the ingest writer.
 
-### Augmenter runtime
+### Enricher runtime
 
-Augmenters run where their inputs are:
+Enrichers run where their inputs are:
 
 | Place | Runs | Isolation |
 |---|---|---|
-| Site agent | Augmenters that read bytes: format plugins, fingerprints, embeddings, classifiers that read content | A sandbox (container or WebAssembly) with read access only to the leased objects, and no network access except to the catalog |
-| Control plane worker | Augmenters that read only metadata: rule-based classification, tag propagation, metrics over metadata | First-party augmenters only |
-| Customer gateway | Augmenters that read customer-held metadata | Like a site agent |
+| Site agent | Enrichers that read bytes: format plugins, fingerprints, embeddings, classifiers that read content | A sandbox (container or WebAssembly) with read access only to the leased objects, and no network access except to the catalog |
+| Control plane worker | Enrichers that read only metadata: rule-based classification, tag propagation, metrics over metadata | First-party enrichers only |
+| Customer gateway | Enrichers that read customer-held metadata | Like a site agent |
 
 The runtime:
 
 - **Scheduling.** The runtime gets work from the change log, from schedules and from requests. Each run is a leased task, so a failed run goes back to the queue.
-- **Writes.** Augmenters write their outputs through the ingest writer, into their own namespaces.
+- **Writes.** Enrichers write their outputs through the ingest writer, into their own namespaces.
 - **Review.** Outputs that need review go into a review queue in the web UI, with their status `proposed`.
-- **Recomputation.** A new augmenter version starts a background recomputation of its outputs. The old outputs stay visible until the new ones are complete.
-- **Costs.** Each run records its compute time, so that the vendor of a hosted service can charge for augmentation separately.
+- **Recomputation.** A new enricher version starts a background recomputation of its outputs. The old outputs stay visible until the new ones are complete.
+- **Costs.** Each run records its compute time, so that the vendor of a hosted service can charge for enrichment separately.
 
 ### Resolver
 
 The resolver serves reads, but it is not in the data path:
 
-- **Name resolution.** The resolver resolves names through views to one version and its best replica for the caller's compute location. It chooses among the verified replicas that jurisdiction and egress rules permit. It prefers the nearest replica, then the cheapest.
-- **Job resolution.** For a training or analysis job, the resolver resolves a pinned specification and returns three things:
+- **Name resolution.** The resolver resolves a name to one version and its best replica for the caller's compute location. A request can state a version, a ref or a time. If it states none, the resolver uses `latest`. It chooses among the verified replicas that jurisdiction and egress rules permit. It prefers the nearest replica, then the cheapest.
+- **Job resolution.** A training or analysis job states its inputs with their roles, and the action and purpose. The resolver fixes each input to an exact snapshot or version. The policy engine then evaluates usage policy. The resolver writes the **resolution** with its policy decision (model, section 7), and returns three things:
   - the **resolved manifest**, as Arrow files that list elements, selectors and replica URLs;
   - **credentials:** signed URLs, or vended credentials scoped to a prefix. The resolver issues prefix-scoped credentials only if the prefix is fully inside one ACL root that the caller can read. If not, the resolver issues signed URLs per object, in batches, as the job requests them. The resolver checks read permission on a snapshot once, at the snapshot. This check then covers all of the snapshot's members;
   - a **run token** that ties the job's reads to an activity record.
-- **Resolution in parts.** A large pinned specification can resolve to billions of elements. In this case, the resolver plans the resolution, as the server-side scan planning of the Iceberg REST catalog does. It returns a plan identifier and a list of parts. Workers then get the parts in parallel. Each part is a manifest file with its credentials.
+- **Resolution in parts.** A large request can resolve to billions of elements. In this case, the resolver plans the resolution, as the server-side scan planning of the Iceberg REST catalog does. It returns a plan identifier and a list of parts. Workers then get the parts in parallel. Each part is a manifest file with its credentials.
 - **Observed capture.** The resolver logs the credentials that it issues under a run token. These logs give the `observed` usage relations.
 
 ### Planning with statistics
@@ -198,7 +197,7 @@ The resolver serves reads, but it is not in the data path:
 The resolver uses statistics (model, section 4) to plan work for a compute engine. A plan for a large resolution has these steps:
 
 1. **Prune snapshots and manifests.** The planner compares the predicates of the request with snapshot statistics and manifest summaries, and skips every manifest that cannot match.
-2. **Check policy by manifest.** The source bitmap of a manifest shows which sources its entries use. If every source of a manifest permits the requested action and purpose, the pinning service accepts the whole manifest without a check of each element. It checks single elements only in manifests that mix permitted and other sources, or that the invalidation set can touch. The fingerprint filters of a manifest show if a takedown can touch it.
+2. **Check policy by manifest.** The source bitmap of a manifest shows which sources its entries use. If every source of a manifest permits the requested action and purpose, the policy engine accepts the whole manifest without a check of each element. It checks single elements only in manifests that mix permitted and other sources, or that the invalidation set can touch. The fingerprint filters of a manifest show if a takedown can touch it.
 3. **Prune files.** Inside the remaining manifests, the planner compares the predicates with file statistics: time spans, coordinate extents, tag sets, bounds.
 4. **Size the tasks.** The planner groups the remaining elements into read tasks of about equal cost. It uses bytes, element counts and measured decode cost, not file counts. This prevents a few large or slow files from holding up the job.
 5. **Place the tasks.** Each task gets the storage resource of its best replica, and the hints of its data: compute location, hardware, cache class. Engines turn these into scheduling constraints.
@@ -208,10 +207,10 @@ The plan returns each task with its expected size, row count and cost. Engines s
 
 Other uses of statistics:
 
-- **Mixtures without scans.** Counts per source and per tag value in snapshot statistics give exact component sizes. Thus the pinning service can turn the weights of a specification into sample rates without a scan.
+- **Sizes without scans.** Counts per source and per tag value in snapshot statistics give the exact size of each input. Thus a job can compute sample rates without a scan.
 - **Stratified sampling and curricula.** Quantile sketches and manifest bounds let the planner select shards by score or difficulty, and order them for a curriculum.
-- **Incremental work.** The change summary between two snapshots, with manifest-level summaries, lets an augmenter process only the members that a new snapshot added.
-- **Contamination and takedown checks.** Fingerprint filters in manifest summaries let mudcat test a fingerprint against a whole zone, and scan only the manifests that can contain it.
+- **Incremental work.** The change summary between two snapshots, with manifest-level summaries, lets an enricher process only the members that a new snapshot added.
+- **Contamination and takedown checks.** Fingerprint filters in manifest summaries let mudcat test a fingerprint against a whole instance, and scan only the manifests that can contain it.
 - **Vector routing.** Embedding centroids in manifest summaries let a similarity search open only the shards near the query vector.
 - **Estimates.** Sketches give the estimated counts of the REST interface and the facet counts of the web UI.
 
@@ -225,19 +224,18 @@ mudcat gives compute engines a read connector and a write connector. Ray Data is
 
 The same connectors are the model for Spark, Daft and PyTorch data loaders.
 
-### Policy engine and pinning service
+### Policy engine
 
-There are five enforcement points: **registration**, **pinning**, **materialisation**, **export** and **deletion**. Everything else happens asynchronously from the change log. This follows the idea of the iRODS policy enforcement point, but without a general rule language in the request path.
+There are five enforcement points: **registration**, **resolution**, **materialisation**, **export** and **deletion**. Everything else happens asynchronously from the change log. This follows the idea of the iRODS policy enforcement point, but without a general rule language in the request path.
 
 - **Access control.** The policy engine delegates access control to the authorization port (next section).
 - **Usage policy.** mudcat always evaluates usage policy itself, in SQL, over the usage grants, constraints and duties attached to sources. The **effective-policy cache** holds the accumulated duties per snapshot, representation and model. It is a derived index, and mudcat recomputes it after each change.
-- **Pinning.** The pinning service:
-  - resolves a specification to snapshots, and records the identifier and the Merkle hash of each;
-  - applies the exclusion lists of each dataset and the zone-wide invalidation set;
+- **Evaluation at resolution.** For each job resolution, the policy engine:
+  - applies the exclusion lists of each dataset and the instance-wide invalidation set;
   - checks that every source that contributes grants the requested action and purpose;
-  - writes the pinned specification with its policy decision and, where the provider issues one, the authorization consistency token.
+  - gives the policy decision to the resolver, with the authorization consistency token where the provider issues one.
 
-  The pinning service fails if the policy does not permit a necessary component.
+  The resolution fails if the policy does not permit a necessary input.
 - **Terms compiler.** The terms compiler compiles licence identifiers and ODRL documents into grants, constraints and duties. It queues anything that it cannot translate for review.
 
 ### Authorization port
@@ -335,16 +333,16 @@ Where a cloud provider can enforce a rule natively, the reconciler configures an
 
 ### Deletion workflow
 
-A takedown, licence expiry, retention deadline or erasure request starts a workflow. The operations are those of the model (model, section 5: removal, tombstones and holds):
+A takedown, licence expiry, retention deadline or erasure request starts a workflow. The operations are those of the model (model, section 5: removal, invalidation and holds):
 
 1. Check legal holds. A hold diverts the data that it matches to its retention compartment. It also stops purge and erasure of that data.
-2. Add the tombstone to the zone-wide invalidation set. From this point, the resolver and the pinning service exclude the content from every snapshot, old or new.
+2. Add the invalidation record to the instance-wide invalidation set. From this point, the resolver excludes the content from every snapshot, old or new.
 3. Enumerate occurrences through the content-identity index and lineage: derived representations, annotation sets, caches, replicas.
 4. If the request needs purge, issue deletion tasks to site agents, and collect a receipt per replica. Where the storage has native versioning, the site agent also removes old object versions, so that the bytes are really gone.
-5. If the request needs erasure, replace the catalog records with minimal tombstones.
+5. If the request needs erasure, replace the catalog records with erasure records.
 6. Make redacted successors of the affected snapshots where their owners want them. The original snapshots keep their hashes.
 7. Flag the models trained on affected data, with the number of affected elements. A person then makes a decision, and the workflow records it.
-8. Send the tombstone on the federation feed to the zones that hold copies.
+8. Send the invalidation on the federation feed to the instances that hold copies.
 
 ### Maintenance
 
@@ -352,7 +350,7 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 
 | Task | Touches | Who does it |
 |---|---|---|
-| Seal recent member rows into manifest files; merge small manifests | Catalog database and the zone's manifest store | Catalog maintenance, a central background worker |
+| Seal recent member rows into manifest files; merge small manifests | Catalog database and the instance's manifest store | Catalog maintenance, a central background worker |
 | Expire unpublished snapshots that nothing refers to; remove the manifests that only they used | Catalog database and manifest store | Catalog maintenance |
 | Rebuild and verify derived indexes | Derived indexes | Index builders |
 | Verify checksums; find dark data and lost replicas | Bytes on a storage resource | Site agents |
@@ -362,7 +360,7 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 
 **Compaction of data files is not invisible in mudcat.** In Iceberg, compaction replaces data files under the same logical table, and readers do not see a change. In mudcat, files are immutable versions with checksums, replicas and lineage. Thus compaction is a transform activity:
 
-- It makes a new **representation** of the same snapshot. The logical members do not change, so pinned specifications stay valid.
+- It makes a new **representation** of the same snapshot. The logical members do not change, so resolutions stay valid.
 - mudcat records the activity, with its inputs and outputs, in provenance.
 - Replication rules then move to the new representation, and the replicas of the old representation retire under their normal retention.
 - A rewrite that drops purged content makes a redacted successor snapshot instead, because the logical members change.
@@ -374,7 +372,7 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 - **Iceberg REST catalog** for records-structured datasets. With it, Spark, Trino, DuckDB and PyIceberg can read these datasets by name. The gateway also vends credentials. Optionally, the gateway can also show the manifest of any snapshot as an Iceberg table, so that these engines can query elements and their metadata. To do this, the gateway generates Iceberg metadata from mudcat's manifests. mudcat does not store its own state in Iceberg metadata files.
 - **Field gateways:** optional gateways that a field profile defines, listed in [fields.md](fields.md). They generate service metadata from CSVW descriptions through community schema profiles that are registered as plugins.
 - **Metadata export:** DCAT, Croissant 1.1, RO-Crate and DataCite, generated from the model for publication and citation.
-- **AI governance export:** SPDX 3 AI and Dataset profiles, and training-content summaries generated from pinned specifications.
+- **AI governance export:** SPDX 3 AI and Dataset profiles, and training-content summaries generated from the resolutions that training runs used.
 - **MCP server** for agents. It runs with the caller's identity and permissions. Its tools:
   - search;
   - describe;
@@ -382,7 +380,7 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
   - lineage;
   - policy check.
 - **fsspec filesystem** (`mudcat://`) for notebooks and Python tools.
-- **Federation feed:** signed CloudEvents that zones exchange. These events carry snapshot descriptions, lineage summaries, tombstones and completeness records. A zone that receives a tombstone runs its own deletion workflow.
+- **Federation feed:** signed CloudEvents that instances exchange. These events carry snapshot descriptions, lineage summaries, invalidations and completeness records. An instance that receives an invalidation runs its own deletion workflow.
 
 ### Clients
 
@@ -391,7 +389,7 @@ Iceberg deployments run table maintenance: data-file compaction, manifest rewrit
 
   ```python
   with mudcat.run(code="git:abc123", image="sha256:...") as run:
-      train = run.open("specs/vision-mix@pinned:7f3a", role="training")
+      train = run.open("datasets/vision-mix@release-3", role="training", purpose="research")
       ...
       run.publish("models/vit-l", files=checkpoint_dir)
   ```
@@ -417,11 +415,11 @@ Every piece of state needs one of three answers to the question of where it live
 Two tests decide most cases:
 
 1. **Who can say no?** If one authority controls the state, replicate it within that authority. Or delegate it to a specialist system that the authority runs or contracts. If several independent authorities each control part of it, federate.
-2. **Is it immutable?** Anyone can copy immutable things (versions, published snapshots, pinned specifications, provenance records) anywhere without coordination. Mutable authoritative state (ACLs, grants, replica state, lifecycle status) has exactly one writer. Never replicate it with multiple writers.
+2. **Is it immutable?** Anyone can copy immutable things (versions, published snapshots, resolutions, provenance records) anywhere without coordination. Mutable authoritative state (ACLs, grants, replica state, lifecycle status) has exactly one writer. Never replicate it with multiple writers.
 
 ### Replicate
 
-Replication happens within one authority, which usually means one zone:
+Replication happens within one authority, which usually means one instance:
 
 - **Bytes:** replicas of versions on several storage resources. Replication rules place them to put data near compute.
 - **Catalog reads:** PostgreSQL read replicas in other regions. Writes go to the primary.
@@ -446,11 +444,11 @@ mudcat delegates to another system when that system is the authority by nature, 
 | Replication inside a cloud | Provider replication and lifecycle rules | Inventory reconciliation |
 | Checksums | Storage-provided checksums where they exist | Periodic re-verification on a policy schedule |
 | Internal file lists of tables | Iceberg, Delta, Lance and Icechunk metadata | The catalog pins a table snapshot identifier; it does not copy the file list |
-| Query execution over manifests | DuckDB, DataFusion, Trino | Results are traceable to pinned manifests |
+| Query execution over manifests | DuckDB, DataFusion, Trino | Results are traceable to registered manifests |
 | Run tracking | MLflow, Weights & Biases, workflow engines | Lineage ingest matches identifiers through aliases |
 | Training inside an enclave, or federated learning at a partner | The enclave or partner | mudcat records the activity with its location and inputs; obligations attach to the model that the activity produces |
 
-mudcat never delegates usage-policy decisions: the evaluation at pinning, and the propagation of duties. These are the system's purpose. They depend on lineage that only the catalog holds.
+mudcat never delegates usage-policy decisions: the evaluation at resolution, and the propagation of duties. These are the system's purpose. They depend on lineage that only the catalog holds.
 
 ### Federate
 
@@ -462,18 +460,18 @@ mudcat uses federation where several authorities will not, or may not, transfer 
 - commercial partners;
 - national facilities in a collaboration.
 
-Each authority runs its own zone with its own namespace, identifiers, access control and policy.
+Each authority runs its own instance with its own namespace, identifiers, access control and policy.
 
-Between zones:
+Between instances:
 
-- **Zones exchange immutable descriptions,** never mutable state: published snapshot descriptions, lineage summaries, completeness records and tombstones, over the signed federation feed. A zone may harvest other zones' published descriptions into its own search index, much as DCAT harvesters do. This copies descriptions, not authority.
-- **References cross zones by IRI.** A pinned specification in zone A can name a snapshot in zone B. To resolve it, the resolver asks zone B. Zone B applies its own access and usage policy.
-- **Identity federates, but authorization does not.** Zone B can accept zone A's users through OIDC federation, but the zone that owns the data makes every decision about it.
-- **Agreements are explicit.** Data or descriptions flow only under an agreement between zones. The zones record each agreement as an ODRL offer and acceptance.
-  - A zone that accepts copies of data under an agreement also accepts the obligations attached to them.
-  - A zone honours tombstones automatically for copies that it received under an agreement that makes this necessary.
-  - The zone queues other tombstones for review.
-- **Data may never move at all.** An enclave zone may publish descriptions and lineage, but forbid any replica outside it. The enclave zone registers the models trained inside it, with its obligations attached.
+- **Instances exchange immutable descriptions,** never mutable state: published snapshot descriptions, lineage summaries, completeness records and invalidations, over the signed federation feed. An instance may harvest other instances' published descriptions into its own search index, much as DCAT harvesters do. This copies descriptions, not authority.
+- **References cross instances by IRI.** A job in instance A can name a snapshot in instance B. To resolve it, the resolver asks instance B. Instance B applies its own access and usage policy.
+- **Identity federates, but authorization does not.** Instance B can accept instance A's users through OIDC federation, but the instance that owns the data makes every decision about it.
+- **Agreements are explicit.** Data or descriptions flow only under an agreement between instances. The instances record each agreement as an ODRL offer and acceptance.
+  - An instance that accepts copies of data under an agreement also accepts the obligations attached to them.
+  - An instance honours invalidations automatically for copies that it received under an agreement that makes this necessary.
+  - The instance queues other invalidations for review.
+- **Data may never move at all.** An enclave instance may publish descriptions and lineage, but forbid any replica outside it. The enclave instance registers the models trained inside it, with its obligations attached.
 
 ### Shared custody: one dataset, several sovereign custodians
 
@@ -487,33 +485,33 @@ Some collaborations sit between the two cases. An example is an international co
 
 mudcat treats this as federation with a shared namespace. It splits authority by kind of state, not by site:
 
-| State | Authority | Other zones |
+| State | Authority | Other instances |
 |---|---|---|
-| Definition of the logical dataset: artifacts, published snapshots, corrections to metadata and reference data | The **producing zone** for each part. A part processed at a site is owned by that site's zone | Subscribe to it, and hold read-only copies of the descriptions |
-| A release that combines parts produced at several sites | A **release snapshot** that lists the member snapshots from each producing zone, with their Merkle hashes. Each producer signs its members, and the release is co-signed | Verify it from the hashes alone |
-| Replicas, replica state and completeness on a site's storage | The **custodian zone** that owns that storage | Receive completeness records, which together give the global answer to "where are the copies" |
-| Access decisions for a site's users and copies | The **custodian zone** | — |
+| Definition of the logical dataset: artifacts, published snapshots, corrections to metadata and reference data | The **producing instance** for each part. A part processed at a site is owned by that site's instance | Subscribe to it, and hold read-only copies of the descriptions |
+| A release that combines parts produced at several sites | A **release snapshot** that lists the member snapshots from each producing instance, with their Merkle hashes. Each producer signs its members, and the release is co-signed | Verify it from the hashes alone |
+| Replicas, replica state and completeness on a site's storage | The **custodian instance** that owns that storage | Receive completeness records, which together give the global answer to "where are the copies" |
+| Access decisions for a site's users and copies | The **custodian instance** | — |
 | Minimum terms of use, such as access rights and embargo periods | Set by the **publisher** in the agreement | Each custodian enforces them, and may add stricter local terms but not looser ones |
-| Local additions: annotation sets, local metadata, derived products | The zone that created them | Shared if the agreement says so |
+| Local additions: annotation sets, local metadata, derived products | The instance that created them | Shared if the agreement says so |
 
 Three mechanisms make this work without shared mutable state:
 
-- **Identifiers of the producer.** A zone that registers a replica of a version that another zone produced uses the UUIDv7 identifier that the producing zone minted. Registration is idempotent on (artifact, content checksum), so independent registrations of the same content converge. The Butler reaches the same goal with deterministic UUIDs. mudcat reaches it because it carries the identifier of the producer.
-- **Verifiable snapshot hashes.** Each snapshot carries a Merkle hash that anyone can verify. Thus anyone who holds the hashes can verify a release of parts that different zones own. No zone has to trust another zone's database.
-- **The federation feed.** Corrections and tombstones flow from producers, and completeness flows from custodians, as signed events. A failure to apply one is visible, because each custodian publishes the snapshot hashes that it holds completely.
+- **Identifiers of the producer.** An instance that registers a replica of a version that another instance produced uses the UUIDv7 identifier that the producing instance minted. Registration is idempotent on (artifact, content checksum), so independent registrations of the same content converge. The Butler reaches the same goal with deterministic UUIDs. mudcat reaches it because it carries the identifier of the producer.
+- **Verifiable snapshot hashes.** Each snapshot carries a Merkle hash that anyone can verify. Thus anyone who holds the hashes can verify a release of parts that different instances own. No instance has to trust another instance's database.
+- **The federation feed.** Corrections and invalidations flow from producers, and completeness flows from custodians, as signed events. A failure to apply one is visible, because each custodian publishes the snapshot hashes that it holds completely.
 
 ### Decision table
 
 | State | Within one authority | Across authorities |
 |---|---|---|
 | Bytes | Replicate, by replication rules | Copies only under an agreement, which carries obligations; enclave data never leaves |
-| Catalog records | Single primary with read replicas | Federate; exchange published, immutable descriptions. Under shared custody, the producing zone owns definitions and each custodian owns its replica records |
-| Search and identity indexes | Derived and replicated freely | Each zone builds its own; it may include harvested descriptions |
-| Provenance | Single primary; run records as catalogued files | Exchange summaries; detail stays with the zone that owns it |
+| Catalog records | Single primary with read replicas | Federate; exchange published, immutable descriptions. Under shared custody, the producing instance owns definitions and each custodian owns its replica records |
+| Search and identity indexes | Derived and replicated freely | Each instance builds its own; it may include harvested descriptions |
+| Provenance | Single primary; run records as catalogued files | Exchange summaries; detail stays with the instance that owns it |
 | Identity | Delegate to the identity provider | Federate through OIDC |
-| Access control | Delegate checks to the authorization port; the catalog owns structural relationships | Never shared; the zone that owns the data decides |
+| Access control | Delegate checks to the authorization port; the catalog owns structural relationships | Never shared; the instance that owns the data decides |
 | Usage policy and duties | Evaluated by mudcat | Duties travel with copies under the agreement |
-| Tombstones and holds | Deletion workflow | Propagated over the federation feed; honoured as the agreement specifies |
+| Invalidations and holds | Deletion workflow | Propagated over the federation feed; honoured as the agreement specifies |
 | Transfers | Delegate to movers | Each side's movers, under the agreement |
 
 ## Main flows
@@ -534,20 +532,20 @@ Three mechanisms make this work without shared mutable state:
 
 ### Train a model
 
-1. A user submits a specification.
-2. The pinning service resolves it to snapshots, applies exclusion lists and the invalidation set, and evaluates usage policy. Then it writes the pinned specification with its policy decision.
+1. A job names its inputs with their roles, for example a dataset at a tag ref in the training role. It also states the action and the purpose.
+2. The resolver fixes each input to an exact snapshot. The policy engine applies exclusion lists and the invalidation set, and evaluates usage policy. The resolver then writes the resolution with its policy decision.
 3. A suitable representation may not exist on a storage resource near the target cluster. In that case, mudcat creates a materialisation and a replication rule. The reconciler completes them.
 4. The job gets a resolved manifest, credentials and a run token from the resolver. Then it reads storage directly.
 5. At the end, the job publishes checkpoints as model versions. The catalog records the training activity with `observed` and `declared` relations, and the full run record as a bundle.
 
 ### Evaluate a model
 
-1. An evaluation activity uses a model and an evaluation suite.
-2. Before the catalog accepts results, it checks the suite's similarity criteria against the model's pinned training specification. It records a leakage assertion either way.
+1. An evaluation activity uses a model and an evaluation dataset.
+2. Before the catalog accepts results, it checks the similarity criteria of the evaluation dataset against the training inputs of the model. It records a leakage assertion either way.
 
 ### Take down a source
 
-This is the deletion workflow above. A tombstone on a source or element starts it.
+This is the deletion workflow above. An invalidation of a source or element starts it.
 
 ## Deployment profiles
 
@@ -555,17 +553,17 @@ This is the deletion workflow above. A tombstone on a source or element starts i
 |---|---|---|
 | Development | Single process with PostgreSQL in a container; plugins run in-process | Laptops, CI, tests |
 | Lab | Catalog API, ingest writer and index builders on one node, PostgreSQL, one site agent per storage resource | AI-for-science startups and single-site groups |
-| Multi-site | One zone per administrative domain, PostgreSQL with read replicas, agents at every storage resource, optional OpenSearch, federation feeds between zones | Collaborations, multi-cloud labs, national facilities |
+| Multi-site | One instance per administrative domain, PostgreSQL with read replicas, agents at every storage resource, optional OpenSearch, federation feeds between instances | Collaborations, multi-cloud labs, national facilities |
 | Hosted | A vendor runs the control plane for many tenants; site agents run in each customer's environment. See [hosted.md](hosted.md) | Teams that do not want to operate mudcat |
 
-A single PostgreSQL primary is a single-region write dependency. Multi-region deployments either accept that and use read replicas elsewhere, or run one zone per region and federate. This document proposes no multi-primary design.
+A single PostgreSQL primary is a single-region write dependency. Multi-region deployments either accept that and use read replicas elsewhere, or run one instance per region and federate. This document proposes no multi-primary design.
 
 ## Scale envelope
 
 | Quantity | Target | Notes |
 |---|---|---|
-| Catalog entities | 10^9 (TBR) versions and replicas per zone | PF-1. Postgres-first catalogs (MetaCat, pgstac) report 10^8; 10^9 needs tests |
-| Elements | 10^11 (TBR) per zone | PF-2. In manifests; never rows in PostgreSQL |
+| Catalog entities | 10^9 (TBR) versions and replicas per instance | PF-1. Postgres-first catalogs (MetaCat, pgstac) report 10^8; 10^9 needs tests |
+| Elements | 10^11 (TBR) per instance | PF-2. In manifests; never rows in PostgreSQL |
 | Registration rate | TBD versions per minute through bulk ingest; design estimate 10^5–10^6 | PF-3. To be measured |
 | Metadata query | First page in less than TBD seconds over 10^8 (TBR) versions | PF-4 |
 | Snapshots | 10^6 | |
@@ -585,7 +583,7 @@ A single PostgreSQL primary is a single-region write dependency. Multi-region de
 
 1. **Core catalog.** Namespace, artifacts, versions, replicas, structure descriptors with the CSVW model, typed metadata and the query language. This step also includes bulk ingest, the Python SDK and CLI, and an importer from current Datacat databases.
 2. **Snapshots and provenance.** Datasets, snapshots, annotation sets, PROV relations, the run context, OpenLineage and MLflow ingest, and the change log.
-3. **Specifications and policy.** Sources, usage grants and duties, the terms compiler and pinning. This step also includes the authorization port with the built-in adapter, resolved manifests and credentials, and data loader integrations. SpiceDB and OpenFGA adapters follow after the conformance suite exists.
+3. **Policy and resolution.** Sources, usage grants and duties, the terms compiler, and policy evaluation at resolution. This step also includes the authorization port with the built-in adapter, resolved manifests and credentials, and data loader integrations. SpiceDB and OpenFGA adapters follow after the conformance suite exists.
 4. **Identity and evaluation.** The content-identity index (exact checksums first), similarity criteria, leakage assertions, and the deletion workflow.
 5. **Placement and federation.** Replication rules, the reconciler, movers, completeness, and federation feeds.
 6. **Gateways.** Iceberg REST, field gateways, Croissant, DCAT and RO-Crate export, and the MCP server, added as users request them. MCP is cheap and can come earlier.
@@ -597,6 +595,6 @@ Each step is useful without the next. The first two together are already a bette
 - **Bulk wire format:** Arrow Flight, or Arrow IPC over plain HTTP. Flight is faster but harder to put behind ordinary gateways.
 - **Single-row writes:** if they should also go through the ingest queue. This gives simpler consistency, but at the cost of latency.
 - **Element-level policy:** how far it should go beyond exclusion lists.
-- **Federation trust:** how zones authenticate one another, and which agreement terms are necessary before a zone honours received tombstones automatically.
+- **Federation trust:** how instances authenticate one another, and which agreement terms are necessary before an instance honours received invalidations automatically.
 - **Authorization source of truth:** if the external service should own grants when a deployment has one, instead of mudcat as owner with a synchronised copy.
 - **Embedded mode:** if an embedded SQLite mode is worth its maintenance cost next to PostgreSQL.

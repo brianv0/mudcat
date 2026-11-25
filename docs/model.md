@@ -26,11 +26,11 @@ An entity is a node of a `mc:` class. "Subclass of" means `rdfs:subClassOf`.
 
 Every entity has an immutable identifier. The catalog publishes this identifier as an IRI. Names, paths and external identifiers are **aliases**. They are unique within their scheme, and point to an identifier. Most aliases are mutable. Content-hash aliases are the exception: they never change.
 
-For every entity, versions and snapshots included, this identifier is a time-ordered UUID (UUIDv7). The zone that minted the UUID qualifies it. That zone is the entity's authority. The embedded timestamp is not a privacy risk, because the access model controls who can see an identifier. Also, UUIDv7 keeps index locality for inserts in time order.
+For every entity, versions and snapshots included, this identifier is a time-ordered UUID (UUIDv7). The instance that minted the UUID qualifies it. That instance is the entity's authority. The embedded timestamp is not a privacy risk, because the access model controls who can see an identifier. Also, UUIDv7 keeps index locality for inserts in time order.
 
 **Content hashes.** The content checksum of a version and the Merkle hash of a snapshot are content hashes. They are immutable, unique and verifiable attributes, not identifiers. The catalog also publishes each content hash as an alias.
 
-**Agreement across zones.** A zone can register a replica of a version that another zone produced. In this case, it uses the identifier from the zone that produced the version. Registration is idempotent on (artifact, content checksum). Thus, independent zones that hold copies of the same content agree on its identity. This is important under shared custody (see [architecture.md](architecture.md)).
+**Agreement across instances.** An instance can register a replica of a version that another instance produced. In this case, it uses the identifier from the instance that produced the version. Registration is idempotent on (artifact, content checksum). Thus, independent instances that hold copies of the same content agree on its identity. This is important under shared custody (see [architecture.md](architecture.md)).
 
 External alias schemes include:
 
@@ -45,7 +45,7 @@ This reverses two earlier designs. Datacat used the name plus the parent folder 
 
 ### Immutability
 
-Versions, snapshots, pinned specifications, policy decisions and provenance records are immutable after the catalog publishes them. Only aliases, refs (branches and tags), lifecycle status, replica state, grants and access-control lists are mutable.
+Versions, snapshots, resolutions, policy decisions and provenance records are immutable after the catalog publishes them. Only aliases, refs (branch refs and tag refs), lifecycle status, replica state, grants and access-control lists are mutable.
 
 ## Entity overview
 
@@ -59,7 +59,7 @@ vars: {
 }
 direction: right
 
-Zone -> Collection: mints
+Instance -> Collection: mints
 Collection -> Collection: contains
 Collection -> Artifact: contains
 Version -> Artifact: specializationOf
@@ -85,12 +85,11 @@ vars: {
 }
 direction: right
 
-Specification -> PinnedSpecification: pinned as
-PinnedSpecification -> Representation: materialised as
-PinnedSpecification -> "Training run": used by (role training)
+"Dataset snapshot" -> Resolution: resolved in
+Resolution -> "Training run": used by (role training)
 "Training run" -> Model: generated
 Model -> Evaluation: used by
-EvaluationSuite -> Evaluation: used by
+"Evaluation dataset" -> Evaluation: used by
 Evaluation -> EvaluationResult: generated
 ```
 
@@ -98,7 +97,7 @@ Evaluation -> EvaluationResult: generated
 
 These concepts come from iRODS and Datacat. The placement concepts come from Rucio.
 
-**Zone** (`mc:Zone`). An independently administered mudcat instance that mints identifiers and can federate with other zones (from iRODS).
+**Instance** (`mc:Instance`). An independently administered mudcat catalog. It has its own database, mints its own identifiers, makes its own access and policy decisions, and can federate with other instances (an iRODS zone).
 
 **Collection** (`mc:Collection`). A node in the logical namespace (iRODS collection; Datacat folder). It contains artifacts and other collections. Its path is an alias. A collection can carry inherited defaults: access-control lists, metadata and provenance (for example, "instrument X produced everything under `/raw/campaign42`").
 
@@ -124,10 +123,12 @@ These concepts come from iRODS and Datacat. The placement concepts come from Ruc
 - An optional deterministic path function maps a version to its path on the resource.
 - Access endpoints are `dcat:DataService` nodes.
 
-**View** (`mc:View`). A rule that resolves a logical name to one version and one replica. It is a general form of Datacat's (version, site) view.
+**Resolution options.** A request for a name can state a version and a place:
 
-- Version selector: `latest`, a number, a ref, a snapshot, or a time ("as of T").
-- Location preference: a named resource, "nearest to compute location L", "cheapest verified" or "canonical".
+- Version: `latest`, a number, a ref, a snapshot, or a time ("as of T"). If the request states none, mudcat uses `latest`.
+- Place: a named storage resource, or the compute location of the caller. If the request states none, mudcat uses the nearest verified replica.
+
+mudcat has no "canonical" or "master" replica, as Datacat had. All verified replicas of a version are equal, and lineage tells where each one came from.
 
 ## 2. Structure
 
@@ -244,7 +245,7 @@ Metadata follows the iRODS attribute–value–unit (AVU) form, with Datacat's t
   - version;
   - replica (physical facts only);
   - element, through annotation sets (section 4).
-- **Assertion origin.** Each value records if a person asserted it, an augmenter computed it, or a model inferred it (`mc:assertedBy`), with the version of the augmenter or model. Where relevant, it also records a confidence. Agent-extracted metadata is now common, and consumers need to tell it apart.
+- **Assertion origin.** Each value records if a person asserted it, an enricher computed it, or a model inferred it (`mc:assertedBy`), with the version of the enricher or model. Where relevant, it also records a confidence. Agent-extracted metadata is now common, and consumers need to tell it apart.
 - **Reference data.** Reference tables, for example of instruments, campaigns or partners, are ordinary record datasets. Attributes link to them through `csvw:valueUrl` and foreign keys, and queries can join through them. This is a general form of Datacat's foreign metadata, the Butler's dimension records and MetaCat's external filters.
 
 ### Tags
@@ -255,19 +256,19 @@ A **tag** (`mc:Tag`) is an attribute definition that classifies, with a closed l
 - **Propagation.** The owner of a tag can mark it to propagate along `prov:wasDerivedFrom`, as duties do. A derived entity then carries the tag of its inputs. Conflicts are flagged.
 - **Policy.** Custody levels, default duties and access conditions can attach to a tag value, instead of to each attribute or object. Thus classification of an entity applies the policy.
 
-### Augmenters
+### Enrichers
 
-An **augmenter** (`mc:Augmenter`) is a registered, versioned plugin that computes metadata. Format plugins are one kind of augmenter. Others compute classifications, quality metrics, fingerprints, embeddings or AI-generated descriptions. Snowflake has the same kinds of function: automatic classification into system tags, data metric functions on a schedule, and generated descriptions.
+An **enricher** (`mc:Enricher`) is a registered, versioned plugin that computes metadata. Format plugins are one kind of enricher. Others compute classifications, quality metrics, fingerprints, embeddings or AI-generated descriptions. Snowflake has the same kinds of function: automatic classification into system tags, data metric functions on a schedule, and generated descriptions.
 
-Each augmenter declares:
+Each enricher declares:
 
 - **Inputs:** the entity classes, structure kinds or tags that it applies to, and if it needs the bytes or only the metadata.
-- **Outputs:** the attributes, tags or annotation sets that it writes. All of them are in a namespace that the augmenter owns. Thus two augmenters cannot write the same attribute.
+- **Outputs:** the attributes, tags or annotation sets that it writes. All of them are in a namespace that the enricher owns. Thus two enrichers cannot write the same attribute.
 - **Trigger:** registration, a change in the change log, a schedule, or a request.
-- **Place of execution:** next to the data (in a site agent), in the control plane (metadata only), or in the customer gateway (customer-held metadata). Augmenters from a third party run only next to the data or in the customer gateway, under the customer's grants. Snowflake native apps also run inside the consumer's account.
+- **Place of execution:** next to the data (in a site agent), in the control plane (metadata only), or in the customer gateway (customer-held metadata). Enrichers from a third party run only next to the data or in the customer gateway, under the customer's grants. Snowflake native apps also run inside the consumer's account.
 - **Review:** if a person must accept the output before it becomes visible.
 
-Each output value records the augmenter and its version as its assertion origin. An output that needs review has the status `proposed` until a person accepts or rejects it. AI-generated descriptions need review by default. When an augmenter gets a new version, mudcat can compute its outputs again in the background. The old outputs stay until the new ones are complete, as with a rebuild of a derived index.
+Each output value records the enricher and its version as its assertion origin. An output that needs review has the status `proposed` until a person accepts or rejects it. AI-generated descriptions need review by default. When an enricher gets a new version, mudcat can compute its outputs again in the background. The old outputs stay until the new ones are complete, as with a rebuild of a derived index.
 
 ## 4. Datasets, snapshots and representations
 
@@ -280,17 +281,17 @@ Each output value records the augmenter and its version as its assertion origin.
 - **Parent and summary.** Each snapshot records its parent snapshot and a summary of the change. The summary gives the operation (add, remove, replace or annotate) and the number of members added and removed. The summary lets clients follow the history of a dataset without a comparison of member lists.
 - **Structural sharing.** A snapshot refers to its members through manifests. A new snapshot refers again to each manifest that did not change, and writes new manifests only for the changes. Iceberg shares manifests between table snapshots in the same way.
 - **Status:** `published`, `deprecated` or `withdrawn`, or no status for a snapshot that is not published.
-  - Only published snapshots can be pinned into training-set specifications or cited.
+  - Only published snapshots can be cited. A run can use any snapshot, and the record of the run names that snapshot exactly.
   - mudcat can mint a DOI for a published snapshot.
-- **Retention.** mudcat keeps each published snapshot. A snapshot that is not published expires after a retention period that the dataset sets. It expires only if no ref and no pinned specification refers to it. Then it removes the manifests that only that snapshot used.
+- **Retention.** mudcat keeps each published snapshot. A snapshot that is not published expires after a retention period that the dataset sets. It expires only if no ref and no resolution refers to it. Then it removes the manifests that only that snapshot used.
 
-**Ref** (`mc:Ref`). A named, mutable pointer from a dataset or an artifact to one snapshot or version, as in Iceberg's branches and tags.
+**Ref** (`mc:Ref`). A named pointer from a dataset or an artifact to one snapshot or version, as in Iceberg's branches and tags. There are two kinds: the **branch ref** and the **tag ref**. The word "tag" alone always means a classification (section 3).
 
-- A **branch** moves when a writer commits a new snapshot to it, for example `main` or `curation`.
-- A **tag** does not move after mudcat creates it, for example `release-2026-11`.
-- **Publication** is a tag on a snapshot, and gives the snapshot the `published` status. This replaces a mutable "working" snapshot: work happens on a branch of immutable snapshots, and publication marks one of them. This is the write-audit-publish pattern of Iceberg users.
-- **Commit requirements.** A writer moves a branch only with a requirement on the snapshot that the branch points to now. Iceberg calls such conditions requirements, for example `assert-ref-snapshot-id`. If another writer moved the branch first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits. Updates that only add members are an exception: mudcat applies them to the newest snapshot without a retry (see the commit cost section of [architecture.md](architecture.md)).
-- mudcat records the history of each branch, so a view can resolve a branch "as of" a time.
+- A **branch ref** moves when a writer commits a new snapshot to it, for example `main` or `curation`.
+- A **tag ref** does not move after mudcat creates it, for example `release-2026-11`.
+- **Publication** is a tag ref on a snapshot, and gives the snapshot the `published` status. This replaces a mutable "working" snapshot: work happens on a branch ref of immutable snapshots, and publication marks one of them. This is the write-audit-publish pattern of Iceberg users.
+- **Commit requirements.** A writer moves a branch ref only with a requirement on the snapshot that the branch ref points to now. Iceberg calls such conditions requirements, for example `assert-ref-snapshot-id`. If another writer moved the branch ref first, mudcat rejects the update, and the writer tries again on the new snapshot. This is the optimistic concurrency of Iceberg commits. Updates that only add members are an exception: mudcat applies them to the newest snapshot without a retry (see the commit cost section of [architecture.md](architecture.md)).
+- mudcat records the history of each branch ref, so a request can resolve a branch ref "as of" a time.
 
 **Snapshots and collections.** Snapshots belong to datasets, not to collections. This follows Iceberg, where each table has its own snapshots and a namespace has none. mudcat gives three things for collections instead:
 
@@ -303,7 +304,7 @@ mudcat does not make a snapshot for each change to a collection, for two reasons
 - **Hot spots.** A hash over a subtree changes with each write under it. Every writer would then need a conditional update of the same ref at the root, and concurrent writers would conflict all the time.
 - **Size.** A collection that receives data all the time would make one snapshot for each change. The Butler team names one large, growing collection of raw data as a failure case. For such a collection, a dataset series with one snapshot for each period (for example one each day) is better.
 
-**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the zone-wide invalidation set instead (section 5).
+**AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element identifier or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the instance-wide invalidation set instead (section 5).
 
 **Representation** (`mc:Representation`, analogous to `dcat:Distribution`). One physical form of a snapshot, such as native HDF5, analysis-ready Zarr, Parquet, WebDataset shards or tokenized shards.
 
@@ -328,8 +329,8 @@ Four rules keep statistics safe to use:
 
 - **Bounds are conservative.** A bound must contain every value. A filter can give false positives, but never false negatives. Thus a planner can skip a file or a manifest only when its statistics prove that nothing inside can match.
 - **Statistics never go stale.** They describe immutable versions, manifests and snapshots, so they do not change. Mutable state, such as which replicas are available now, is not a statistic.
-- **Statistics are derived.** Augmenters compute them at registration, at manifest sealing and at publication. Each statistic records its kind and the version of the augmenter that computed it, so mudcat can compute it again when an augmenter changes.
-- **Statistics can come from execution.** Engines can report what they observed, for example the real decode time of a file or a file that could not be read. An augmenter records these observations as statistics, so the next plan is better. A file that could not be read gets a `suspect` state for review.
+- **Statistics are derived.** Enrichers compute them at registration, at manifest sealing and at publication. Each statistic records its kind and the version of the enricher that computed it, so mudcat can compute it again when an enricher changes.
+- **Statistics can come from execution.** Engines can report what they observed, for example the real decode time of a file or a file that could not be read. An enricher records these observations as statistics, so the next plan is better. A file that could not be read gets a `suspect` state for review.
 
 **Hints** (`mc:Hint`) are statistics that a person or a policy sets on a collection, a dataset or a tag value, not values that mudcat computes. Examples:
 
@@ -362,7 +363,7 @@ A **source** (`mc:Source`, subclass of `prov:Entity`) records where data origina
 
 Access control decides who may read, change and administer catalog entries and the data they describe. mudcat models it as relationships, in the style of Google's Zanzibar. This lets either mudcat itself or an external Zanzibar-style service serve it (see the authorization section of [architecture.md](architecture.md)).
 
-- **Object types:** zone, collection, artifact, dataset, snapshot, specification, model, storage resource, group, compartment, ticket.
+- **Object types:** instance, collection, artifact, dataset, snapshot, model, storage resource, group, compartment, ticket.
 - **Relations** connect objects to subjects or to other objects, for example `collection#owner`, `collection#writer`, `collection#reader`, `collection#acl_root`, `dataset#collection`, `group#member`, `compartment#member`. A subject is a user, a service account, or a set of subjects such as `group:team#member`.
 - **Permissions:** mudcat computes them from relations by union, intersection and exclusion, and by a step along a relation to another object. For example, the readers, writers and owners of the collection's ACL root get read permission. If the object has a compartment, they must also be members of that compartment.
 - **Datacat's permission set** (read, insert, write, delete, admin) maps onto permissions in this schema. iRODS read, write and own map onto the same set.
@@ -404,7 +405,7 @@ The rules by tier:
 | Tier | Entities | Grants |
 |---|---|---|
 | Containers | Collections, datasets | The normal place for grants, through ACL roots |
-| Rich entities | Snapshots, specifications, models, evaluation suites | Individual grants permitted, because there are at most millions of them |
+| Rich entities | Snapshots, models, evaluation datasets | Individual grants permitted, because there are at most millions of them |
 | Cheap entities | Artifact versions and replicas | Individual grants only as exceptions: one shared file, or one file withdrawn from an otherwise readable collection (an exclusion relation). The catalog reports how many exist |
 | Elements | Parts of a version | No access grants. Element-level control is usage policy (exclusion lists) or redaction tiers (separate annotation sets with their own compartment) |
 
@@ -449,7 +450,7 @@ Usage policy decides the permitted uses of data. It is separate from access cont
 - **Actions:** `mc:use`, `mc:train`, `mc:evaluate`, `mc:fineTune`, `mc:distribute`, `mc:publishDerivative`.
 - **Purposes:** from DPV where possible, for example research, commercial research or product development.
 
-Grants have the same shape as access relationships, for example `source:X#train@purpose:research`. Thus, mudcat can mirror them to an external Zanzibar-style service for online checks. Enforcement does not depend on that mirror (see pinning, below).
+Grants have the same shape as access relationships, for example `source:X#train@purpose:research`. Thus, mudcat can mirror them to an external Zanzibar-style service for online checks. Enforcement does not depend on that mirror (see evaluation at resolution, below).
 
 **Constraints and duties** are structured records attached to sources:
 
@@ -458,7 +459,7 @@ Grants have the same shape as access relationships, for example `source:X#train@
 
 Duties **propagate** along `prov:wasDerivedFrom` and training usage to all derived entities, models included. They accumulate. mudcat flags conflicts and never resolves them silently.
 
-**Evaluation at pinning.** A training-set specification is permitted for an (action, purpose) only if every source that contributes to it grants it and no constraint excludes it. The pinning service computes this with set operations in SQL over the sources of all components. Usually there are thousands to millions of these sources. The pinning service does not do one check per source. It also records the accumulated duties in the policy decision.
+**Evaluation at resolution.** mudcat enforces usage policy when a job resolves data for an action and a purpose (section 7). The request is permitted only if every source that contributes to it grants that action and purpose, and no constraint excludes it. The policy engine computes this with set operations in SQL over the sources of all the requested data. Usually there are thousands to millions of these sources. The policy engine does not do one check per source. It also records the accumulated duties in the policy decision.
 
 ### Terms of use
 
@@ -471,31 +472,31 @@ mudcat keeps the terms themselves (what a licence or contract says) separate fro
 | A contract in plain text | A person records the grants and duties, and the document is attached |
 
 - **Traceability.** Each compiled grant, constraint and duty records the clause it came from.
-- **Partial compilation.** If mudcat compiled only part of the terms of a source, it marks the source as partly compiled. Pinning blocks any purpose that depends on the untranslated part until a reviewer approves it.
-- **Export.** mudcat exports terms with published snapshots (`odrl:hasPolicy` in DCAT, and in Croissant and RO-Crate exports). The federation feed between zones also carries them.
-- **Negotiation.** A zone can publish an ODRL offer and record the accepted agreement before the zones exchange data.
+- **Partial compilation.** If mudcat compiled only part of the terms of a source, it marks the source as partly compiled. Resolution blocks any purpose that depends on the untranslated part until a reviewer approves it.
+- **Export.** mudcat exports terms with published snapshots (`odrl:hasPolicy` in DCAT, and in Croissant and RO-Crate exports). The federation feed between instances also carries them.
+- **Negotiation.** An instance can publish an ODRL offer and record the accepted agreement before the instances exchange data.
 
-### Removal, tombstones and holds
+### Removal, invalidation and holds
 
 "Delete" can mean five different operations. They differ in two ways:
 
 - **Direction in time.** A forward operation changes only what comes after it, as an Iceberg delete file or an S3 delete marker does. A retroactive operation also changes what a reader can do with history.
-- **What remains.** Some operations keep the bytes, some keep only the catalog record, and some keep only a minimal tombstone.
+- **What remains.** Some operations keep the bytes, some keep only the catalog record, and some keep only an erasure record.
 
 | Operation | Effect | Direction | Bytes | Catalog record |
 |---|---|---|---|---|
 | **Remove from a dataset** | A new snapshot without the member | Forward | Kept | Kept. Older snapshots still contain the member |
-| **Delete an artifact** | A **delete marker**: a new version with no content becomes `latest` | Forward | Kept until the retention of the artifact ends | Kept. Older versions still resolve |
-| **Invalidate** | A **tombstone** (`prov:wasInvalidatedBy` an `mc:Takedown` activity) on an element, version, source or snapshot, with the reason and the party that made the request | Retroactive | Kept until purge | Kept, with the tombstone |
+| **Delete an artifact** | A **delete marker**: a new version with no content becomes `latest`. Object stores with versions, such as S3, use the same term for the same operation | Forward | Kept until the retention of the artifact ends | Kept. Older versions still resolve |
+| **Invalidate** | An **invalidation record** (`prov:wasInvalidatedBy` an `mc:Takedown` activity) on an element, version, source or snapshot, with the reason and the party that made the request | Retroactive | Kept until purge | Kept, with the invalidation record |
 | **Purge** | Removal of the bytes of each replica, with a **deletion receipt** (`mc:DeletionReceipt`) per replica: the content, the location, the time and the agent | Retroactive | Removed | Kept. Replicas get the state `retired` |
-| **Erase** | Removal of the catalog record. Only a minimal tombstone stays: the identifier, the date, the reason and the stored content hash | Retroactive | Removed | Removed, except the minimal tombstone |
+| **Erase** | Removal of the catalog record. Only an **erasure record** stays: the identifier, the date, the reason and the stored content hash | Retroactive | Removed | Removed, except the erasure record |
 
 The rules:
 
-- **Tombstones apply to all snapshots.** A tombstone does not create a new snapshot of each dataset that contains the content. mudcat keeps one zone-wide **invalidation set**. The resolver and the pinning service apply it to every snapshot, old or new. Thus a takedown takes effect at once, also for snapshots that a pinned specification already uses.
+- **Invalidations apply to all snapshots.** An invalidation does not create a new snapshot of each dataset that contains the content. mudcat keeps one instance-wide **invalidation set**. The resolver applies it to every snapshot, old or new. Thus a takedown takes effect at once, also for snapshots that a run already used.
 - **Exclusion lists in a dataset are forward.** An exclusion list that is an annotation set of one dataset (for example the opt-outs of one source) is a forward operation. It affects only the snapshots that contain it. This is the equivalent of an Iceberg deletion vector.
 - **Snapshots keep their hashes.** A snapshot that contains invalidated, purged or erased content keeps its Merkle hash. The hash still proves what the snapshot contained. mudcat can make a redacted successor snapshot, for continued use of the rest of the content.
-- **Erasure is for data that must not stay in the catalog,** for example personal data in metadata. The minimal tombstone does not contain the erased metadata. Sometimes the content hash can itself identify a person. Then mudcat also removes the hash. As a result, nobody can verify that member of the snapshots that contained it.
+- **Erasure is for data that must not stay in the catalog,** for example personal data in metadata. The erasure record does not contain the erased metadata. Sometimes the content hash can itself identify a person. Then mudcat also removes the hash. As a result, nobody can verify that member of the snapshots that contained it.
 - **Legal holds** (`mc:LegalHold`) block purge and erasure for the entities in scope, and move them to a retention compartment, with the reason recorded. Where a storage resource has native retention locks, for example object lock on a bucket, mudcat applies the hold through them.
 - **Models** that used invalidated content get a flag with the number of affected elements. A person decides what to do, and mudcat records the decision.
 
@@ -504,7 +505,7 @@ The rules:
 A reader can resolve a dataset, an artifact or an alias "as of" a time T. Four rules apply:
 
 1. **History, not past permissions.** As-of resolution gives the membership and metadata as of T. But mudcat applies the access control, usage policy and invalidation set of now. A reader cannot use time travel to get content that mudcat invalidated after T.
-2. **Audit is separate.** An auditor who must know what mudcat permitted at T reads the recorded decisions. These are the decision in each pinned specification, with its authorization consistency token, and the audit log. Time travel does not compute past decisions again.
+2. **Audit is separate.** An auditor who must know what mudcat permitted at T reads the recorded decisions. These are the decision in each resolution, with its authorization consistency token, and the audit log. Time travel does not compute past decisions again.
 3. **Retention limits time travel.** mudcat keeps published snapshots, so time travel to them always works. Unpublished snapshots expire. As-of resolution to a time whose snapshot expired fails with an error that states the expiry. It does not silently resolve to another snapshot.
 4. **Mutable state has a history.** mudcat keeps the transaction-time history of refs, aliases, ACLs, grants, replica states and lifecycle status. Thus, for example, an old path in a script resolves to the artifact that the path named at T. Some periods of validity are part of the data, for example the term of a licence or an embargo date. These are ordinary attributes, not a second time dimension.
 
@@ -512,7 +513,7 @@ A reader can resolve a dataset, an artifact or an alias "as of" a time T. Four r
 
 Provenance uses PROV-O directly.
 
-**Entities** are versions, snapshots, annotation sets, representations, pinned specifications, models and evaluation results.
+**Entities** are versions, snapshots, annotation sets, representations, resolutions, models and evaluation results.
 
 **Activities** (subclasses of `prov:Activity`):
 
@@ -540,7 +541,7 @@ A role can carry the mark **ubiquitous** (calibration, tokenizer, base model), a
 
 **Derivation subproperties:** `mc:fineTunedFrom`, `mc:quantizedFrom`, `mc:distilledFrom`, `mc:materializedFrom`, all subproperties of `prov:wasDerivedFrom`.
 
-**Plans.** Training-set specifications, protocols and pipelines are `prov:Plan`s. `prov:qualifiedAssociation` and `prov:hadPlan` link them.
+**Plans.** Protocols and pipelines are `prov:Plan`s. `prov:qualifiedAssociation` and `prov:hadPlan` link them.
 
 **Method records** (`mc:Method`) describe, as structured attributes, how someone measured or computed a value:
 
@@ -563,46 +564,38 @@ Manifest columns carry **element-level lineage**: parent element identifiers, or
 
 ## 7. Training and evaluation
 
-**Specification** (`mc:Specification`, subclass of `prov:Plan`). A declarative training or evaluation set. It contains:
+mudcat follows the ML tracking tools here. MLflow, W&B and ML Metadata do not store a description of a training set. They record the inputs that each run used. mudcat does the same, and adds the policy decision.
 
-- **Components:** snapshot references, or queries that resolve to snapshots or selections.
-- **Filters** over metadata and annotation sets.
-- **Weights.**
-- **Sample rule** (`mc:SampleRule`). For records, one record. For arrays, a window over named dimensions with size, stride and offset. For images, a crop. For streams, a clip or episode boundary.
-- **Order and curriculum.**
-- **Transforms,** such as tokenizer version and normalisation.
-- **Seed.**
+**Resolution** (`mc:Resolution`, subclass of `prov:Entity`). The immutable record of one request to resolve data for a job. The resolver creates it. It contains:
 
-Specifications can nest. This is the object that SeqIO calls a mixture.
+- **Inputs:** the exact snapshots or artifact versions, each with a role (`mc:training`, `mc:validation`, `mc:test`, and so on) and an optional selection.
+- **Action and purpose:** for example `mc:train` for research.
+- **Policy decision** (`mc:PolicyDecision`): the policies that the policy engine evaluated, the evaluator version, the outcome and what it excluded.
 
-**PinnedSpecification** (`mc:PinnedSpecification`, subclass of `prov:Entity`). A specification frozen at a point in time:
+A run uses a resolution, and thus uses each input in its role. The record always names exact versions, also when the request said `latest`.
 
-- every component is fixed to a snapshot hash;
-- every weight is a number;
-- the pinning service attaches a **policy decision** (`mc:PolicyDecision`): the policies that it evaluated, the evaluator version, the outcome and what it excluded.
+**What mudcat does not store.** Weights between inputs, sample rules, order and seeds stay in the code of the job. The run records them as parameters. A stored, reusable description of a training set (SeqIO calls this a mixture) is not part of the model at this time.
 
-mudcat enforces usage policy at pinning.
-
-**Materialisation.** A representation generated from a pinned specification. A training activity uses a pinned specification, in the `mc:training` role, through one of its materialisations.
+**Materialisation.** A representation that a run generates from resolved data, for example training shards.
 
 **Model** (`mc:Model`, subclass of `mc:Artifact`). Its versions are checkpoints and exported weights, usually with opaque or container structures. The derivation subproperties above link them.
 
-**EvaluationSuite** (`mc:EvaluationSuite`, subclass of `mc:PinnedSpecification`). A pinned specification with a protection class: public, restricted or held by a third party. It also carries registered canary strings and an access audit requirement.
+**Evaluation dataset.** A dataset with a protection class as a tag: public, restricted or held by a third party. It also carries registered canary strings and an access audit requirement.
 
-**EvaluationResult** (`mc:EvaluationResult`). An `mc:Evaluation` activity that used a model and a suite generates it. It records metrics and their definitions.
+**EvaluationResult** (`mc:EvaluationResult`). An `mc:Evaluation` activity that used a model and an evaluation dataset generates it. It records metrics and their definitions.
 
 **SimilarityCriterion** (`mc:SimilarityCriterion`). A registered, versioned rule that decides when two elements count as the same for leakage purposes:
 
 - kinds: exact checksum, near-duplicate fingerprint, a domain-specific similarity measure, coordinate or time-range overlap, event date before a cutoff;
 - plus its parameters, threshold and implementation version.
 
-**LeakageAssertion** (`mc:LeakageAssertion`). A statement that two pinned specifications satisfy, or violate, a criterion. It carries the evidence (a similarity table or an identity-index query) and the time of the check.
+**LeakageAssertion** (`mc:LeakageAssertion`). A statement that two sets of data satisfy, or violate, a criterion. Usually the two sets are the training inputs of a model and an evaluation dataset. It carries the evidence (a similarity table or an identity-index query) and the time of the check.
 
 ## 8. Placement
 
 **ReplicationRule** (`mc:ReplicationRule`), from Rucio. Fields:
 
-- a subject: a snapshot, representation, pinned specification, or a query over them;
+- a subject: a snapshot, a representation, or a query over them;
 - a storage-resource expression;
 - a number of copies;
 - a lifetime;
@@ -618,7 +611,7 @@ External movers do the transfers. mudcat records the requests and their outcomes
 
 | mudcat | Standard terms | Datacat | iRODS | Rucio | Rubin Butler |
 |---|---|---|---|---|---|
-| Zone | — | — | Zone | VO (partly) | Repository |
+| Instance | — | One Datacat server | Zone | VO (partly) | Repository |
 | Collection | — | Folder | Collection | Container DID (partly) | — |
 | Artifact | `prov:Entity` | Dataset | Data object | File DID | Dataset (by type and data ID) |
 | Version | `prov:specializationOf`, `dcat:version` | Dataset version | — | — | Dataset in a RUN collection |
@@ -629,11 +622,9 @@ External movers do the transfers. mudcat records the requests and their outcomes
 | Field / structure descriptor | `csvw:Column`, `csvw:Table` | — | — | — | Dataset type with its schema |
 | Metadata attribute | `csvw:Column`, `csvw:propertyUrl` | User metadata | AVU | DID metadata | Dimension record fields |
 | Reference data | `csvw:foreignKey` | Foreign metadata | — | — | Dimension records |
-| View | — | View (version, site) | — | — | Collection search path |
 | Access control | Zanzibar-style relationships | ACL | ACL, ticket | Account permissions | Repository groups |
 | Usage policy | `mc:UsageGrant`, `mc:Duty`; terms as `odrl:Policy` | — | Rules (partly) | — | — |
 | Provenance | PROV-O | — | Audit (partly) | — | Provenance quantum graph |
-| Specification | `prov:Plan` | — | — | — | Pipeline and quantum graph (partly) |
 | Replication rule | — | — | Resource hierarchy | Replication rule | — |
 
 ## 10. Open questions
