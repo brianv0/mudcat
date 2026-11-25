@@ -166,7 +166,7 @@ For each variant the runner makes a fresh tenant, builds the fixture from the pa
 
 ## The mutation gate
 
-`scripts/mutation-gate.sh` is the test of the checks. The cargo feature `mutants` makes `mudcat::mutant(name)` true when the environment variable `MUDCAT_MUTANT` has that name; without the feature it is a constant `false`, so a normal build has no switch. Thirteen defects, each a change of one line or a few, are behind it:
+`scripts/mutation-gate.sh` is the test of the checks. The cargo feature `mutants` makes `mudcat::mutant(name)` true when the environment variable `MUDCAT_MUTANT` has that name; without the feature it is a constant `false`, so a normal build has no switch. Thirteen defects, each a change of one line or a few, are behind it, and ten more (the second sample, below) in the array `SAMPLE2` of the script:
 
 | Defect | Where | What it does |
 |---|---|---|
@@ -201,7 +201,26 @@ The first thirteen defects were chosen by the author of the implementation. This
 | `overlap-strict` | leakage.rs, `overlap` | two time ranges that only touch at one end are not related | QY-3 |
 | `register-latest-only` | namespace.rs, `register_in` | a repeated registration is idempotent only if the checksum is that of the latest version; one of an older version makes a new version | OP-5 |
 
-For the baseline and for each defect, the script runs the smoke evals and `cargo test`, and writes `evals/results/mutation-gate.txt`: the templates that failed, the tests that failed, and "detected" or "NOT DETECTED". `relay-xid-rule` depends on timing and runs three times; it counts as detected only if every run detects it. The script exits with an error if a defect is not detected or if the baseline is not green. It takes about 40 minutes in a debug build (its own target directory, `target/mutants`). In CI it is a workflow that is started by hand.
+**Before (`evals/results/mutation-gate-sample2-before.txt`, with the checks as they were).** Detected by a variant of the templates: 2 (`completeness-any-verified`, `sync-keeps-leavers`; both also by a scenario test). Detected only by a test: 1 (`overlap-strict`, by uc2_05). Detected by nothing: 7. Each of the three detections was for the right reason: T1.3 and uc1_03 saw a completeness record that said complete with unverified replicas; T5.3 and uc5_04 saw a member who had left the team still in the group; uc2_05 saw two ranges that touch not counted as related. None was a timeout or a fixture error. The author of the product had ten defects at 10 of 10 after the checks were made for them; on this sample the detection rate was 3 of 10 (2 of 10 by the templates).
+
+**How each blind spot is closed.** Each is closed by a distractor or a real attempt under an existing check text of `tasks.yaml`, except two that no template verifies, which have tests. Each was seen to fail with its defect (the gate, `evals/results/mutation-gate.txt`).
+
+| Defect | Closed by | Check that fails with the defect |
+|---|---|---|
+| `expire-ignores-resolution` | T2.3 as-of-expired-snapshot: a snapshot of a second dataset that no ref names but a resolution names; it must not expire and must resolve again | "The error states that the snapshot expired..." (the driver adds the distractor to its condition) |
+| `tag-inherit-top-wins` | T4.2 restrict-by-tag: the tag is on the collection, and a document in a lower collection sets its own value | "The second document is in the answer as before" (3 variants) |
+| `purge-hold-first-only` | T3.2 with a hold: the purge or erase names a version that no hold covers before the held one | "The bytes exist, and the answer names the hold and its reason" (now evaluated also when nothing blocked), and INV-12 (12 variants) |
+| `jurisdiction-first-only` | no template verifies RD-9: `tests/second_sample.rs`, two datasets with the restricted collection first and second | the test |
+| `lineage-depth-off-by-one` | no template verifies PF-7: `tests/second_sample.rs`, a chain of three levels with the limits 1 and 2 | the test |
+| `poll-floor-off-by-one` | T4.1 position-too-old: a poll one position before the floor must be refused too | "mudcat tells the consumer that its position is too old" (3 variants) |
+| `overlap-strict` | T2.2 time-range-overlap: half of the related ranges only touch the training range at one end | "The assertion gives the number of related test elements..." (2 variants) |
+| `register-latest-only` | T4.1: a second version of a document, and then the first content again (a retry of an old request) | the variants fail with the unique-key error of `version_content` and not with INV-13: the defect shows as a database error in the driver, and the checks of the variant are "not evaluated". The cause is the defect; the check that is meant (INV-13) did not see it first |
+
+`no-stream-filter` (EV-6) is closed in T4.1: a second consumer whose identity can read `/docs` and not `/private` must have the documents of `/docs` only ("has exactly the documents of the catalog", 6 variants). `tag-ref-movable` (ID-7) is closed in T2.3: a commit on the published tag ref `v1` is attempted, and a resolution by the tag must have the first members ("The members and their versions are the same...", 5 variants). Both are still detected by their scenario tests.
+
+At the last commit the gate detects 23 of 23 defects; the 13 of the first set and the 10 of the second. The second sample is an after-the-fact fit of the checks as well: the 7 blind spots were closed after they were known, so the 10 of 10 now says nothing about a third sample. The number that carries information is the one before: 3 of 10.
+
+For the baseline and for each defect, the script runs the smoke evals and `cargo test`, and writes `evals/results/mutation-gate.txt`: the templates that failed, the tests that failed, and "detected" or "NOT DETECTED". `relay-xid-rule` depends on timing and runs three times; it counts as detected only if every run detects it. The script exits with an error if a defect is not detected or if the baseline is not green. The run of all twenty-three takes about 45 minutes in a debug build (its own target directory, `target/mutants`). In CI it is a workflow that is started by hand.
 
 ## What the evals do not detect
 
@@ -221,18 +240,19 @@ The first probe seeded ten defects, one at a time, and ran the 280 variants and 
 
 What stays weak:
 
-- **Ten defects are few.** They were chosen by the author of the implementation, for mechanisms that the design calls necessary. A defect that nobody thought of is not tested. Most requirements have no defect of their own.
-- **Two defects are detected only by scenario tests.** No variant of the templates has a subscription that must not get the events of a different ACL root, and none tries to move a tag ref.
-- **A defect that the gate could not show: one process.** With all ten defects detected and 280 of 280 variants green, a tenant move still lost writes. Each check ran the mover and the clients in one process, and the implementation kept the routing of tenants in the memory of the process. A defect in a mechanism can be seeded; an assumption that every check shares cannot. It was found when the fence of the move was to get a test with fixed steps, and the first question was what a second process does. Now `tests/tenant_move_processes.rs` uses two instances on the same databases, and T5.4 has a second process that writes. Other assumptions that every check still shares: one database server, one database role, a clock that the instance controls, and storage in the same process.
-- **Interleavings.** The order of events and the fence of a tenant move have tests with fixed steps. The branch requirement of commits has none (T1.2 detects `no-branch-lock` only by load, with 2 to 32 writers).
+- **Twenty-three defects are few.** Thirteen were chosen by the author of the implementation and ten by a second session; the first sample was detected 10 of 10 after the checks were made for it, the second 3 of 10 before they were. A third sample would again measure the weak points that are not known now. Most requirements have no defect of their own.
+- **Two mechanisms have a test and no template.** The jurisdiction rules of a collection (RD-9) and the depth limit of a lineage (PF-7) are verified by `tests/second_sample.rs` only; no task template lists them.
+- **Detections by a database error.** `register-latest-only` is detected because the variants of T4.1 fail with the unique-key error of the database, not by INV-13.
+- **A defect that the gate could not show: one process.** With all ten (then) defects detected and 280 of 280 variants green, a tenant move still lost writes. Each check ran the mover and the clients in one process, and the implementation kept the routing of tenants in the memory of the process. A defect in a mechanism can be seeded; an assumption that every check shares cannot. It was found when the fence of the move was to get a test with fixed steps, and the first question was what a second process does. Now `tests/tenant_move_processes.rs` uses two instances on the same databases, and T5.4 has a second process that writes. Other assumptions that every check still shares: one database server, one database role, a clock that the instance controls, and storage in the same process.
+- **Interleavings.** The order of events, the fence of a tenant move and the branch requirement of commits (`tests/commit_interleaving.rs`) have tests with fixed steps. In that test the second commit waits even without the row lock of the read: it waits on its own update of the ref. What shows the missing lock is the result (no conflict, a wrong parent), not the wait. Other interleavings (a commit and an expiry, a purge and a resolution) have none.
 - **Same author.** The drivers and the checks have the same author as the implementation, and in places they read and write the database directly, not only through the interfaces of mudcat. A pass is weaker evidence than its number suggests.
 - **Unit tests.** `query.rs` is tested for the SQL text and parameters of the predicate only; its path-glob part is built inside `run`, which needs a transaction, and has scenario tests only.
 - **CI.** The workflow `ci` runs on each push on GitHub's runners and has passed there (build, `cargo test`, the smoke scale). The workflow `mutation-gate` has not run there: a workflow that is started by hand must be on the default branch first.
 
 ## Not yet done
 
-- More seeded defects, so that each requirement that a task verifies has one that the task detects (the gate has thirteen).
-- A test with fixed interleavings for the branch requirement of commits; variants that detect `no-stream-filter` and `tag-ref-movable`.
+- More seeded defects, chosen by someone other than the author of the checks, so that each requirement that a task verifies has one that the task detects (the gate has twenty-three). A third sample would show how much the closing of the second one covers.
+- Task templates for the jurisdiction rules (RD-9), tag inheritance as a task of its own (ST-17) and the depth limit of a lineage (PF-7); today a variant or a test covers them inside another task.
 - A check for each assumption that all checks share (one database server, one database role, the clock of the instance, storage in the same process), or a statement of it as a limit.
 - Variants that act and observe only through the public interfaces, with a stable ID for each check.
 - Random sequences of actions with the invariants as the only checks.
