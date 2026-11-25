@@ -150,7 +150,9 @@ pub async fn leakage_check(ctx: &mut Ctx) -> Result<()> {
                 let is_rel = j < rel;
                 let content = if is_rel && criterion == "exact-checksum" { format!("structure {}", j % 900) } else { format!("{salt}-test {j}") };
                 let mut r = Register { path: format!("{ds}-files/e{j:05}"), content_hash: Some(crate::instance::sha256_hex(content.as_bytes())), size: 10, source: Some("src".into()), ..Default::default() };
-                let t0 = if is_rel { (j % 900) as f64 * 10.0 + 1.0 } else { 1.0e7 + j as f64 * 10.0 };
+                // under time-range-overlap, half of the related ranges only touch the training range at its end
+                let touch = criterion == "time-range-overlap" && j % 2 == 1;
+                let t0 = if is_rel { (j % 900) as f64 * 10.0 + if touch { 5.0 } else { 1.0 } } else { 1.0e7 + j as f64 * 10.0 };
                 r.stats = Some(json!({"time": [t0, t0 + 2.0]}));
                 match criterion.as_str() {
                     "near-duplicate" => r.fingerprint = Some(if is_rel { key(j % 900) } else { format!("{salt}-{j}") }),
@@ -214,9 +216,16 @@ pub async fn reproduce_later(ctx: &mut Ctx) -> Result<()> {
         ctx.inst.clock.advance(chrono::Duration::seconds(5));
         // a later commit moves main; nothing refers to s0 any more
         commit(&admin, DatasetChange { dataset: "/s/train".into(), requirement: Some(s0.snapshot), remove: vec![versions[0]], ..Default::default() }).await?;
+        // a distractor: a snapshot of a second dataset that no ref names any more, but that a
+        // resolution names (ID-9: such a snapshot does not expire)
+        let reviewer = ctx.session("user:trainer");
+        in_tx!(admin, |tx| datasets::create_dataset(&mut tx, "/s/other", &Default::default()).await?);
+        let d0 = commit(&admin, DatasetChange { dataset: "/s/other".into(), add: vec![Member::version(versions[1])], ..Default::default() }).await?;
+        let dres = resolve(ctx, &reviewer, &train_request(vec![dataset_input("/s/other", Some("main"), "training")], "train", "research")).await?;
+        commit(&admin, DatasetChange { dataset: "/s/other".into(), requirement: Some(d0.snapshot), add: vec![Member::version(versions[2])], ..Default::default() }).await?;
         ctx.inst.clock.advance(chrono::Duration::days(365));
         let expired = in_tx!(admin, |tx| datasets::expire(&mut tx).await?);
-        let reviewer = ctx.session("user:trainer");
+        let distractor_kept = !expired.contains(&d0.snapshot) && resolve_again(ctx, &reviewer, dres.id).await.is_ok();
         let before: i64 = in_tx!(admin, |tx| tx.q1("select count(*) from resolution", &[]).await?.get(0));
         let mut req = train_request(vec![dataset_input("/s/train", Some("main"), "training")], "train", "research");
         req.inputs[0].as_of = Some(t0);
@@ -225,7 +234,7 @@ pub async fn reproduce_later(ctx: &mut Ctx) -> Result<()> {
         match r {
             Err(e) if e.code() == "snapshot-expired" => {
                 ctx.outcome("error-states-expiry");
-                ctx.check("the snapshot expired", e.to_string().contains("expired") && expired.contains(&s0.snapshot) && before == after, e.to_string());
+                ctx.check("the snapshot expired", e.to_string().contains("expired") && expired.contains(&s0.snapshot) && before == after && distractor_kept, format!("{e}; the snapshot that a resolution names stays and resolves again: {distractor_kept}"));
             }
             Err(e) => {
                 ctx.outcome("error");
@@ -243,6 +252,14 @@ pub async fn reproduce_later(ctx: &mut Ctx) -> Result<()> {
     let r0 = resolve(ctx, &trainer, &req).await?;
     let act = in_tx!(admin, |tx| provenance::record_run(&mut tx, &RunSpec { kind: "training".into(), code: Some("git:abc".into()), resolution: Some(r0.id), ..Default::default() }).await?);
     in_tx!(admin, |tx| provenance::publish_model(&mut tx, &ModelSpec { path: "/models/m".into(), content_hash: "m1".into(), size: 1, activity: Some(act), ..Default::default() }).await?);
+    // a real attempt to move the published tag ref v1 with a commit of a document that came later:
+    // the tag ref does not move, and a new resolution by the tag has the members of the first one
+    let late = register_files(&admin, &store, "/s/data", "s/data/late-", &[("late.bin".to_string(), b"a document that came later".to_vec())], Some("src"), None).await?;
+    verify_all(&admin, "store").await?;
+    let attempt = commit(&admin, DatasetChange { dataset: "/s/train".into(), branch: "v1".into(), add: vec![Member::version(late[0].version_id)], ..Default::default() }).await;
+    let tag_refused = matches!(&attempt, Err(e) if e.code() == "tag-ref-immutable");
+    let by_tag = resolve(ctx, &trainer, &req).await?;
+    let tag_same = by_tag.tasks.iter().map(|t| t.version).collect::<BTreeSet<_>>() == r0.tasks.iter().map(|t| t.version).collect::<BTreeSet<_>>();
     ctx.step().await?;
     ctx.inst.clock.advance(chrono::Duration::days(365));
 
@@ -308,7 +325,11 @@ pub async fn reproduce_later(ctx: &mut Ctx) -> Result<()> {
     let now: BTreeSet<Uuid> = r.tasks.iter().map(|t| t.version).collect();
     let newly: Vec<String> = r.decision["newly_excluded"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
     ctx.outcome(if !newly.is_empty() { "same-less-excluded" } else if now == orig { "same" } else { "different" });
-    ctx.check("The members and their versions are the same", now == orig && r.inputs[0]["snapshot"] == json!(snap.id), "");
+    ctx.check(
+        "The members and their versions are the same",
+        now == orig && r.inputs[0]["snapshot"] == json!(snap.id) && tag_refused && tag_same,
+        format!("the commit on the tag ref v1 was refused: {tag_refused}; a resolution by the tag v1 has the first members: {tag_same}"),
+    );
     ctx.check("also reports that an input has a newer version", r.notices.iter().any(|n| n["message"] == "an input has a newer version"), format!("{:?}", r.notices));
     if let Some((v, p)) = &renamed {
         let t = r.tasks.iter().find(|t| t.version == *v);

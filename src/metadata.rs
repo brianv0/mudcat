@@ -375,10 +375,13 @@ pub async fn effective_tags_many(tx: &Tx<'_>, entities: &[Uuid]) -> Result<Vec<(
         }
     }
     if !prefixes.is_empty() {
+        let order = if crate::mutant("tag-inherit-top-wins") { "desc" } else { "asc" };
         let rows = tx
             .q(
-                "select t.name, t.value from tag t join collection c on c.id = t.entity_id and c.tenant_id = t.tenant_id
-                  where c.path = any($1) order by length(c.path) asc",
+                &format!(
+                    "select t.name, t.value from tag t join collection c on c.id = t.entity_id and c.tenant_id = t.tenant_id
+                      where c.path = any($1) order by length(c.path) {order}"
+                ),
                 &[&prefixes],
             )
             .await?;

@@ -1,0 +1,16 @@
+mutation gate: d4886d15a3b42d08cc3ee127e0fc427a74ca20e8 dirty=no smoke scale 2026-11-25T20:24:36Z
+templates: failed variants in parentheses; tests: failed test names
+
+defect                    | templates that failed | tests that failed | result
+--------------------------+-----------------------+-------------------+---------
+(no defect)               | none                  | none              | ok (all green)
+expire-ignores-resolution | none                  | none              | NOT DETECTED (0/1 runs)
+tag-inherit-top-wins      | none                  | none              | NOT DETECTED (0/1 runs)
+purge-hold-first-only     | none                  | none              | NOT DETECTED (0/1 runs)
+jurisdiction-first-only   | none                  | none              | NOT DETECTED (0/1 runs)
+completeness-any-verified | T1.3(6)               | uc1_03            | detected
+sync-keeps-leavers        | T5.3(3)               | uc5_04            | detected
+lineage-depth-off-by-one  | none                  | none              | NOT DETECTED (0/1 runs)
+poll-floor-off-by-one     | none                  | none              | NOT DETECTED (0/1 runs)
+overlap-strict            | none                  | uc2_05            | detected
+register-latest-only      | none                  | none              | NOT DETECTED (0/1 runs)

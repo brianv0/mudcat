@@ -1,23 +1,35 @@
-mutation gate: b53b4f0ab711e114195a02e55465eba5d5e7fdce dirty=no smoke scale 2026-11-25T19:58:19Z
+mutation gate: 1bd06670841a35b914ddc3d37f711ed80db9f358 dirty=no smoke scale 2026-11-25T22:49:42Z
 templates: failed variants in parentheses; tests: failed test names
 
-defect            | templates that failed                     | tests that failed                                            | result
-------------------+-------------------------------------------+--------------------------------------------------------------+---------
-(no defect)       | none                                      | none                                                         | ok (all green)
-no-invalidation   | T1.1(20) T2.3(1) T3.2(36) T4.2(1)         | uc3_03 uc3_04 uc3_07                                         | detected
-expired-grant-ok  | T3.1(8)                                   | uc3_02                                                       | detected
-no-compartment    | T3.2(12) T4.2(3)                          | uc3_04                                                       | detected
-search-no-recheck | T4.2(5)                                   | uc1_04 uc4_03                                                | detected
-no-stream-filter  | none                                      | uc4_05                                                       | detected
-wide-prefix       | T1.1(20)                                  | uc1_05                                                       | detected
-merkle-constant   | T1.2(7) T2.1(8) T2.3(6) T3.2(60) T5.4(8)  | datasets::tests::merkle_known_vectors                        | detected
-tag-ref-movable   | none                                      | uc2_06                                                       | detected
-no-branch-lock    | T1.2(7)                                   | uc1_02                                                       | detected
-relay-xid-rule    | none                                      | events_are_in_commit_order_with_overlapping_transactions     | detected (3/3 runs)
-no-home-check     | T5.4(2)                                   | a_move_back_to_the_shared_tier_with_another_process          | detected
-                  |                                           | a_move_waits_for_open_writes_and_refuses_new_ones_at_once   
-                  |                                           | a_read_through_another_process_after_a_move_sees_the_tenant 
-                  |                                           | a_tenant_that_another_process_made_is_found a_write_through_
-                  |                                           | another_process_after_a_move_is_in_the_tenant               
-no-move-fence     | T5.4(1)                                   | a_move_waits_for_open_writes_and_refuses_new_ones_at_once    | detected
-cleanup-no-drain  | none                                      | a_read_transaction_that_is_open_at_the_switch_keeps_its_rows | detected
+defect                    | templates that failed                     | tests that failed                                            | result
+--------------------------+-------------------------------------------+--------------------------------------------------------------+---------
+(no defect)               | none                                      | none                                                         | ok (all green)
+no-invalidation           | T1.1(20) T2.3(1) T3.2(36) T4.2(1)         | uc3_03 uc3_04 uc3_07                                         | detected
+expired-grant-ok          | T3.1(8)                                   | uc3_02                                                       | detected
+no-compartment            | T3.2(12) T4.2(3)                          | uc3_04                                                       | detected
+search-no-recheck         | T4.2(5)                                   | uc1_04 uc4_03                                                | detected
+no-stream-filter          | T4.1(6)                                   | uc4_05                                                       | detected
+wide-prefix               | T1.1(20)                                  | uc1_05                                                       | detected
+merkle-constant           | T1.2(7) T2.1(8) T2.3(6) T3.2(60) T5.4(8)  | datasets::tests::merkle_known_vectors                        | detected
+tag-ref-movable           | T2.3(5)                                   | uc2_06                                                       | detected
+no-branch-lock            | T1.2(7)                                   | the_second_commit_that_only_adds_waits_and_then_applies_to_t | detected
+                          |                                           | he_snapshot_of_the_first the_second_commit_with_a_requiremen
+                          |                                           | t_waits_and_then_gets_the_conflict                          
+relay-xid-rule            | T1.2(1)                                   | events_are_in_commit_order_with_overlapping_transactions     | detected (3/3 runs)
+no-home-check             | T5.4(2)                                   | a_move_back_to_the_shared_tier_with_another_process          | detected
+                          |                                           | a_move_waits_for_open_writes_and_refuses_new_ones_at_once   
+                          |                                           | a_read_through_another_process_after_a_move_sees_the_tenant 
+                          |                                           | a_tenant_that_another_process_made_is_found a_write_through_
+                          |                                           | another_process_after_a_move_is_in_the_tenant               
+no-move-fence             | T5.4(2)                                   | a_move_waits_for_open_writes_and_refuses_new_ones_at_once    | detected
+cleanup-no-drain          | none                                      | a_read_transaction_that_is_open_at_the_switch_keeps_its_rows | detected
+expire-ignores-resolution | T2.3(1)                                   | none                                                         | detected
+tag-inherit-top-wins      | T4.2(3)                                   | none                                                         | detected
+purge-hold-first-only     | T3.2(12)                                  | none                                                         | detected
+jurisdiction-first-only   | none                                      | jurisdiction_rules_apply_to_every_collection_of_the_inputs   | detected
+completeness-any-verified | T1.3(6)                                   | uc1_03                                                       | detected
+sync-keeps-leavers        | T5.3(3)                                   | uc5_04                                                       | detected
+lineage-depth-off-by-one  | none                                      | a_lineage_traversal_fails_exactly_at_its_depth_limit         | detected
+poll-floor-off-by-one     | T4.1(3)                                   | none                                                         | detected
+overlap-strict            | T2.2(2)                                   | uc2_05                                                       | detected
+register-latest-only      | T4.1(9)                                   | none                                                         | detected

@@ -99,7 +99,9 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
     let rollbacks = ctx.is("rollbacks", "some");
     let total: usize = ctx.scale.size(10_000, 2000, 1000);
     let admin = ctx.admin.clone();
-    in_tx!(admin, |tx| namespace::ensure_collection(&mut tx, "/docs").await?);
+    acl_root(&admin, "/docs", None).await?;
+    acl_root(&admin, "/private", None).await?;
+    grant_collection(&admin, "/docs", "reader", "user:insider").await?;
     let per_writer = total / writers;
     let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let rolled_back = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
@@ -181,10 +183,14 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
         // the consumer was away longer than the retention of change events
         ctx.inst.clock.advance(ctx.inst.config.event_retention + chrono::Duration::days(1));
         stream::prune(&consumer_session).await?;
+        // a consumer that is one position before the retention floor misses the event at the floor: it must be told too
+        let floor: i64 = in_tx!(admin, |tx| tx.q1("select floor from stream_state", &[]).await?.get(0));
+        let near = stream::poll(&consumer_session, floor - 1, 100, None, false).await;
+        let near_told = floor > 0 && matches!(&near, Err(e) if e.code() == "position-too-old");
         match stream::poll(&consumer_session, 0, 100, None, false).await {
             Err(e) if e.code() == "position-too-old" => {
                 must_backfill = true;
-                ctx.check("tells the consumer that its position is too old", true, e.to_string());
+                ctx.check("tells the consumer that its position is too old", near_told, format!("{e}; the position {} (one before the floor {floor}) is refused too: {near_told}", floor - 1));
                 let (pos, docs) = stream::backfill(&consumer_session, None).await?;
                 for d in &docs {
                     if d["kind"] == "artifact" {
@@ -218,11 +224,28 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
     let name: String = first.get(0);
     let hash: String = first.get(1);
     in_tx!(admin, |tx| namespace::register_batch(&mut tx, &[Register { path: format!("/docs/{name}"), content_hash: Some(hash.clone()), size: 100, ..Default::default() }]).await?);
+    // the document changes (a second version), and then the first content comes again, as a retry of an old request does
+    in_tx!(admin, |tx| namespace::register_batch(&mut tx, &[Register { path: format!("/docs/{name}"), content_hash: Some(format!("{hash}-changed")), size: 100, ..Default::default() }]).await?);
+    in_tx!(admin, |tx| namespace::register_batch(&mut tx, &[Register { path: format!("/docs/{name}"), content_hash: Some(hash.clone()), size: 100, ..Default::default() }]).await?);
+    ctx.step().await?;
     consumer.poll_all(&consumer_session).await?;
-    let catalog: BTreeSet<Uuid> = in_tx!(admin, |tx| tx.q("select id from artifact a where a.collection_id = (select id from collection where path = '/docs')", &[]).await?.iter().map(|r| r.get(0)).collect());
+    // a second consumer, whose identity can read /docs and not /private: its index has the documents of /docs only (EV-6)
+    let insider_ok = if consumer_state == "position-too-old" {
+        true
+    } else {
+        let private: Vec<Register> = (0..5).map(|i| Register { path: format!("/private/p{i}"), content_hash: Some(format!("private-{i}")), size: 1, ..Default::default() }).collect();
+        in_tx!(admin, |tx| namespace::register_batch(&mut tx, &private).await?);
+        consumer.poll_all(&consumer_session).await?;
+        let insider = ctx.session("user:insider");
+        let mut other = Consumer::default();
+        other.poll_all(&insider).await?;
+        let readable: BTreeSet<Uuid> = in_tx!(admin, |tx| tx.q("select id from artifact a where a.collection_id = (select id from collection where path = '/docs')", &[]).await?.iter().map(|r| r.get(0)).collect());
+        other.docs.keys().copied().collect::<BTreeSet<Uuid>>() == readable
+    };
+    let catalog: BTreeSet<Uuid> = in_tx!(admin, |tx| tx.q("select id from artifact a where a.collection_id in (select id from collection where path in ('/docs', '/private'))", &[]).await?.iter().map(|r| r.get(0)).collect());
     let mine: BTreeSet<Uuid> = consumer.docs.keys().copied().collect();
     ctx.check("never gets a position lower than a position", !consumer.lower_seen || consumer_state == "stops-and-restarts", "");
-    ctx.check("has exactly the documents of the catalog", mine == catalog, format!("consumer {}, catalog {}", mine.len(), catalog.len()));
+    ctx.check("has exactly the documents of the catalog", mine == catalog && insider_ok, format!("consumer {}, catalog {}; a consumer that can read /docs only has the documents of /docs only: {insider_ok}", mine.len(), catalog.len()));
     let rb = rolled_back.lock().clone();
     let leaked = rb.iter().filter(|p| consumer.paths.contains(*p)).count();
     ctx.check("got no event for a transaction that rolled back", !rb.is_empty() && leaked == 0, format!("{} rolled-back documents, {leaked} seen", rb.len()));
@@ -262,6 +285,19 @@ pub async fn retrieval_after_change(ctx: &mut Ctx) -> Result<()> {
     for (v, text) in [(p.version_id, "project budget for the bridge"), (q.version_id, "project budget for the bridge (copy)")] {
         in_tx!(admin, |tx| crate::metadata::write(&mut tx, &crate::metadata::WriteMetadata { entity: v, namespace: "dc".into(), payload: json!({"description": text}), ..Default::default() }).await?);
     }
+    // restrict-by-tag: a document in a collection below the one that gets the tag, which sets its own value of the
+    // tag (the value of the lower collection wins, ST-17); it is not affected
+    let mut open_doc = None;
+    if change == "restrict-by-tag" {
+        let o_files = vec![("budget-open.txt".to_string(), b"project budget for the bridge, the open part".to_vec())];
+        let o = register_files(&admin, &store, "/docs/projects/open", "projects/open/", &o_files, None, None).await?[0].clone();
+        in_tx!(admin, |tx| crate::metadata::write(&mut tx, &crate::metadata::WriteMetadata { entity: o.version_id, namespace: "dc".into(), payload: json!({"description": "project budget for the bridge, the open part"}), ..Default::default() }).await?);
+        in_tx!(admin, |tx| {
+            let c = namespace::collection(&tx, "/docs/projects/open").await?.id;
+            crate::metadata::tag(&mut tx, c, "sensitivity", "normal").await?
+        });
+        open_doc = Some(o.version_id);
+    }
     verify_all(&admin, "store").await?;
     search::build(&admin).await?;
     ctx.step().await?;
@@ -287,7 +323,11 @@ pub async fn retrieval_after_change(ctx: &mut Ctx) -> Result<()> {
             v2 = Some(r.version_id);
         }
         _ => {
-            in_tx!(admin, |tx| crate::metadata::tag(&mut tx, p.artifact_id, "sensitivity", "restricted").await?);
+            // the tag is on the collection; each document under it that sets no value of its own inherits it (ST-17)
+            in_tx!(admin, |tx| {
+                let c = namespace::collection(&tx, "/docs/projects").await?.id;
+                crate::metadata::tag(&mut tx, c, "sensitivity", "restricted").await?
+            });
         }
     }
     let stale = request == "search-with-stale-index";
@@ -309,7 +349,7 @@ pub async fn retrieval_after_change(ctx: &mut Ctx) -> Result<()> {
         async move {
             if request == "resolve" {
                 let mut got = BTreeSet::new();
-                for path in ["/docs/projects/budget.txt", "/docs/other/budget-copy.txt"] {
+                for path in ["/docs/projects/budget.txt", "/docs/other/budget-copy.txt", "/docs/projects/open/budget-open.txt"] {
                     let req = resolver::Request { inputs: vec![resolver::Input { artifact: Some(path.into()), role: "retrieval".into(), ..Default::default() }], ..Default::default() };
                     if let Ok(r) = resolver::resolve(&s, &req).await {
                         got.extend(r.tasks.iter().map(|t| t.version));
@@ -339,7 +379,8 @@ pub async fn retrieval_after_change(ctx: &mut Ctx) -> Result<()> {
         "visible"
     };
     ctx.outcome(outcome);
-    ctx.check("The second document is in the answer as before", ken_got.contains(&q.version_id) && lea_got.contains(&q.version_id), "");
+    let open_ok = open_doc.map(|o| ken_got.contains(&o) && lea_got.contains(&o)).unwrap_or(true);
+    ctx.check("The second document is in the answer as before", ken_got.contains(&q.version_id) && lea_got.contains(&q.version_id) && open_ok, format!("the document below the tagged collection, with its own value of the tag, is in the answer: {open_ok}"));
     ctx.check("contains nothing from the affected content", ken_p.is_empty(), format!("{ken_p:?}"));
     ctx.check("although the search index has not processed the change", index_pos < last, format!("index at {index_pos}, stream at {last}"));
     ctx.check("The second user still gets the document", lea_got.contains(&p.version_id), "");

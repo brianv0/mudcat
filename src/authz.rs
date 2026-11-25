@@ -576,7 +576,7 @@ pub async fn sync_membership(tx: &mut Tx<'_>, source: Uuid) -> Result<Vec<String
         .map(|r| r.get(0))
         .collect();
     for p in &current {
-        if !principals.contains(p) {
+        if !principals.contains(p) && !crate::mutant("sync-keeps-leavers") {
             revoke(tx, "group", &group, "member", p).await?;
         }
     }

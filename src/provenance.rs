@@ -488,7 +488,7 @@ pub async fn lineage(tx: &Tx<'_>, start: Uuid, q: &LineageQuery) -> Result<Value
     nodes.insert(start, node(tx, start).await?);
     let mut level = 0;
     while !frontier.is_empty() {
-        if level >= depth {
+        if level >= depth + usize::from(crate::mutant("lineage-depth-off-by-one")) {
             // is there more beyond the limit?
             let more = next_level(tx, &frontier, &q.direction, q.include_ubiquitous).await?;
             if more.iter().any(|(_, to, _)| !nodes.contains_key(to)) {

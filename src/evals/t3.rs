@@ -137,6 +137,9 @@ pub async fn removal(ctx: &mut Ctx) -> Result<()> {
     let regs = register_files(&admin, &r1, "/r", "r/", &files, Some("src"), None).await?;
     let c = regs[0].version_id;
     let d = regs[1].version_id;
+    // with a hold: a version of the same source that is in no dataset, so that no hold covers it. The
+    // request names it before C (a request for more than one version: the hold of the second counts)
+    let free = if hold { Some(register_files(&admin, &r1, "/r", "r/", &[("F.bin".to_string(), b"a version that no hold covers".to_vec())], Some("src"), None).await?[0].version_id) } else { None };
     // a second replica of C
     admin.inst.store.put("producer", &r2.bucket, "r/C.bin", &files[0].1)?;
     in_tx!(admin, |tx| namespace::add_replica(&mut tx, c, &r2, &r2.url("r/C.bin"), "registered", None, None).await?);
@@ -183,10 +186,11 @@ pub async fn removal(ctx: &mut Ctx) -> Result<()> {
             in_tx!(counsel, |tx| policy::invalidate(&mut tx, "version", &c.to_string(), "takedown request 4711", "rights holder").await?);
         }
         "purge" | "erase" => {
+            let named: Vec<Uuid> = free.into_iter().chain([c]).collect();
             let out = if level == "purge" {
-                in_tx!(counsel, |tx| policy::purge(&mut tx, &[c], "takedown request 4711").await?)
+                in_tx!(counsel, |tx| policy::purge(&mut tx, &named, "takedown request 4711").await?)
             } else {
-                in_tx!(counsel, |tx| policy::erase(&mut tx, &[c], "erasure request", false).await?)
+                in_tx!(counsel, |tx| policy::erase(&mut tx, &named, "erasure request", false).await?)
             };
             blocked = out.blocked_by_hold.clone();
             run_agent(&admin, "store-1").await?;
@@ -269,8 +273,11 @@ pub async fn removal(ctx: &mut Ctx) -> Result<()> {
     let poll = crate::stream::poll(&admin, start_pos, 10_000, None, true).await?;
     let removal_event = poll.events.iter().any(|d| d["id"] == json!(c) && d["removed"] == true);
     ctx.check("Only an erasure record stays, and the state stream has a removal event", !version_exists && erasure && removal_event, format!("removal event: {removal_event}"));
-    if let Some(b) = &blocked {
-        ctx.check("The bytes exist, and the answer names the hold and its reason", bytes_exist && b["name"] == "litigation 22-cv-1" && b["reason"].as_str().map(|r| r.contains("22-cv-1")).unwrap_or(false), format!("{b}"));
+    if hold && matches!(level.as_str(), "purge" | "erase") {
+        let b = blocked.clone().unwrap_or(Value::Null);
+        ctx.check("The bytes exist, and the answer names the hold and its reason", bytes_exist && b["name"] == "litigation 22-cv-1" && b["reason"].as_str().map(|r| r.contains("22-cv-1")).unwrap_or(false), format!("bytes exist: {bytes_exist}; blocked by: {b}"));
+    }
+    if let Some(_b) = &blocked {
         let comps = in_tx!(admin, |tx| crate::authz::compartments_of(&tx, "version", c).await?);
         // and the access: a reader who is not a member of the compartment is denied the version, a member is allowed
         let outsider = in_tx!(trainer, |tx| crate::authz::check(&tx, "read", "version", c).await?);
