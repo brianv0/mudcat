@@ -782,3 +782,69 @@ pub async fn cited_inputs(tx: &Tx<'_>, activity: Uuid) -> Result<Vec<(Uuid, Opti
         .await?;
     Ok(rows.iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
 }
+
+/// Import an OpenLineage run event as an activity with imported usage and generation (PR-6).
+/// Dataset names match entities through identifiers: the scheme `openlineage` with the value
+/// `<namespace>/<name>`, or a path. A name with no match becomes a placeholder artifact under
+/// `/openlineage`, which mudcat reconciles later (architecture.md, "Lineage ingest").
+pub async fn import_openlineage(tx: &mut Tx<'_>, ev: &Value) -> Result<Value> {
+    let run_id = ev["run"]["runId"].as_str().ok_or_else(|| Error::invalid("an OpenLineage event has run.runId"))?;
+    let job = format!("{}/{}", ev["job"]["namespace"].as_str().unwrap_or(""), ev["job"]["name"].as_str().unwrap_or(""));
+    let key = format!("openlineage-run:{run_id}");
+    let act = match namespace::resolve_identifier(tx, "openlineage-run", &key, None).await? {
+        Some(a) => a,
+        None => {
+            let id = new_id();
+            tx.exec(
+                "insert into activity (id, kind, code, params, started_at, capture) values ($1,'transform',$2,$3,$4,'imported')",
+                &[&id, &job, &json!({"openlineage_run": run_id, "producer": ev["producer"]}), &tx.now],
+            )
+            .await?;
+            namespace::set_identifier(tx, "openlineage-run", &key, id).await?;
+            tx.emit("activity.started", id, "activity", None, json!({"kind": "transform", "job": job, "capture": "imported"})).await?;
+            id
+        }
+    };
+    let mut matched = Vec::new();
+    let mut placeholders = Vec::new();
+    for (field, is_input) in [("inputs", true), ("outputs", false)] {
+        for d in ev[field].as_array().cloned().unwrap_or_default() {
+            let name = format!("{}/{}", d["namespace"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or(""));
+            let path = d["name"].as_str().unwrap_or("").to_string();
+            let found = match namespace::resolve_identifier(tx, "openlineage", &name, None).await? {
+                Some(e) => Some(e),
+                None if path.starts_with('/') => namespace::resolve_identifier(tx, "path", &path, None).await?,
+                None => None,
+            };
+            let entity = match found {
+                Some(e) => {
+                    matched.push(name.clone());
+                    // an artifact stands for its latest version
+                    tx.qopt("select latest_version_id from artifact where id = $1", &[&e]).await?.and_then(|r| r.get::<_, Option<Uuid>>(0)).unwrap_or(e)
+                }
+                None => {
+                    let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect();
+                    let reg = namespace::register(
+                        tx,
+                        &Register { path: format!("/openlineage/{safe}"), kind: Some("placeholder".into()), content_hash: Some(sha256_hex(name.as_bytes())), ..Default::default() },
+                    )
+                    .await?;
+                    namespace::set_identifier(tx, "openlineage", &name, reg.artifact_id).await?;
+                    placeholders.push(name.clone());
+                    reg.version_id
+                }
+            };
+            if is_input {
+                add_usage(tx, act, entity, "input", "imported", None).await?;
+            } else {
+                tx.exec("insert into generation (activity_id, entity_id) values ($1,$2) on conflict do nothing", &[&act, &entity]).await?;
+                tx.emit("generation.recorded", act, "activity", None, json!({"entity": entity, "capture": "imported"})).await?;
+            }
+        }
+    }
+    if matches!(ev["eventType"].as_str(), Some("COMPLETE") | Some("FAIL") | Some("ABORT")) {
+        tx.exec("update activity set ended_at = $2, params = params || $3 where id = $1", &[&act, &tx.now, &json!({"state": ev["eventType"]})]).await?;
+        tx.emit("activity.ended", act, "activity", None, json!({"state": ev["eventType"]})).await?;
+    }
+    Ok(json!({"activity": act, "matched": matched, "placeholders": placeholders}))
+}

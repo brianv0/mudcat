@@ -76,6 +76,7 @@ pub fn router(inst: Arc<Instance>) -> Router {
         .route("/resolutions/{id}/again", post(post_resolve_again))
         .route("/lineage/{id}", get(get_lineage))
         .route("/query", post(post_query))
+        .route("/lineage/openlineage", post(post_openlineage))
         .route("/register", post(post_register))
         .route("/commit", post(post_commit))
         .route("/datasets/{id}/changes", get(get_changes))
@@ -197,6 +198,16 @@ async fn post_query(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R
     if let Some(o) = out.as_object_mut() {
         o.remove("sql");
     }
+    Ok(Json(out))
+}
+
+async fn post_openlineage(State(app): State<App>, headers: HeaderMap, raw: Bytes) -> R {
+    let s = sess(&app, &headers)?;
+    let ev: Value = body(raw)?;
+    let mut c = s.client().await.map_err(ApiError)?;
+    let mut tx = s.begin(&mut c).await?;
+    let out = provenance::import_openlineage(&mut tx, &ev).await?;
+    tx.commit().await?;
     Ok(Json(out))
 }
 
