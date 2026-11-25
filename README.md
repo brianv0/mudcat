@@ -26,6 +26,7 @@ For any piece of data and any model, mudcat answers five questions:
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
 | [docs/requirements.md](docs/requirements.md) | The system requirements, written to the NASA guidance for requirements, with a rationale and a verification method for each |
 | [docs/fields.md](docs/fields.md) | Guidelines for each scientific and technical field: domain semantics, schema profiles, formats and examples |
+| [docs/open-items.md](docs/open-items.md) | Working notes: what the discussion decided and the documents do not yet contain, the decisions that need a confirmation, and the conventions of the project |
 
 The research behind the design is in the Datacat fork, at [brianv0/datacat, branch `claude/cool-keller-domhwr`](https://github.com/brianv0/datacat/tree/claude/cool-keller-domhwr). Its `reports/` directory holds the two reports and `research_notes/` holds the notes that support them.
 
