@@ -503,3 +503,130 @@ pub async fn run(tx: &Tx<'_>, q: &str, opts: &QueryOptions) -> Result<Value> {
     let next = if more { rows.get(limit as usize - 1).map(|r| json!(r.get::<_, Uuid>(5))) } else { None };
     Ok(json!({"items": items, "next": next, "sql": sql}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    type Defs = HashMap<String, (Uuid, String, bool)>;
+
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    /// The SQL condition and the parameters (as text) that a predicate compiles to.
+    fn compile_with(q: &str, defs: &Defs, selective: &[(String, bool)]) -> Result<(String, Vec<String>)> {
+        let mut p = Parser { t: lex(q)?, i: 0 };
+        let e = p.or()?;
+        assert_eq!(p.i, p.t.len(), "the whole query is parsed: {q}");
+        let mut c = Compiler { params: Vec::new(), defs, selective: selective.iter().cloned().collect() };
+        let sql = c.expr(&e)?;
+        Ok((sql, c.params.iter().map(|p| format!("{p:?}")).collect()))
+    }
+
+    fn compile(q: &str) -> Result<(String, Vec<String>)> {
+        compile_with(q, &Defs::new(), &[])
+    }
+
+    #[test]
+    fn lexer_tokens() {
+        use Tok::*;
+        assert_eq!(
+            lex(r#"size > 6200 and status =~ "valid*" and tag('a b', -1.5)"#).unwrap(),
+            vec![
+                Ident("size".into()),
+                Op(">".into()),
+                Num(6200.0),
+                Ident("and".into()),
+                Ident("status".into()),
+                Op("=~".into()),
+                Str("valid*".into()),
+                Ident("and".into()),
+                Ident("tag".into()),
+                LParen,
+                Str("a b".into()),
+                Comma,
+                Num(-1.5),
+                RParen
+            ]
+        );
+        // names may hold dots and slashes; operators of two characters are one token
+        assert_eq!(lex("dc.title!=/raw/x").unwrap(), vec![Ident("dc.title".into()), Op("!=".into()), Ident("/raw/x".into())]);
+        assert!(lex("size > #").is_err(), "a character that starts no token is refused");
+    }
+
+    #[test]
+    fn columns_and_operators() {
+        let (sql, params) = compile("size > 6200").unwrap();
+        assert_eq!(sql, "v.size::double precision > $1");
+        assert_eq!(params, vec!["6200.0"]);
+        // a glob is turned into LIKE; % and _ in the text are escaped
+        let (sql, params) = compile(r#"name =~ "a_b*""#).unwrap();
+        assert_eq!(sql, "a.name like $1");
+        assert_eq!(params, vec![r#""a\\_b%""#]);
+        // precedence: not, then and, then or; the output is fully parenthesised
+        let (sql, params) = compile(r#"kind = raw and not size >= 10 or structure != "records""#).unwrap();
+        assert_eq!(sql, "((a.kind = $1 and (not v.size::double precision >= $2)) or (v.structure->>'kind') <> $3)");
+        assert_eq!(params, vec![r#""raw""#, "10.0", r#""records""#]);
+        let (sql, _) = compile("(kind = a or kind = b) and size < 5").unwrap();
+        assert_eq!(sql, "((a.kind = $1 or a.kind = $2) and v.size::double precision < $3)");
+    }
+
+    #[test]
+    fn attributes_declared_and_not() {
+        let mut defs = Defs::new();
+        defs.insert("energy".into(), (id(7), "number".into(), false));
+        defs.insert("qc.run".into(), (id(8), "integer".into(), true));
+        defs.insert("run".into(), (id(8), "integer".into(), true));
+        // declared, in the payloads: the value is the first parameter, the key the second
+        let (sql, params) = compile_with("energy > 3", &defs, &[]).unwrap();
+        assert!(sql.contains("(m.payload->>$2)::double precision > $1"), "{sql}");
+        assert_eq!(params, vec!["3.0", r#""energy""#]);
+        // declared with the index, many matches: probe the index for each row
+        let (sql, params) = compile_with("qc.run = 4", &defs, &[]).unwrap();
+        assert!(sql.starts_with("(exists (select 1 from attr_index x where x.attr_id = $2 and x.entity_id = v.id and x.num_value = $1)"), "{sql}");
+        assert_eq!(params, vec!["4.0".to_string(), format!("{:?}", id(8))]);
+        // declared with the index, few matches: start from the index
+        let key = cmp_key(id(8), "=", &Tok::Num(4.0));
+        let (sql, _) = compile_with("qc.run = 4", &defs, &[(key, true)]).unwrap();
+        assert!(sql.starts_with("v.id in (select x.entity_id from attr_index x where x.attr_id = $2 and x.num_value = $1"), "{sql}");
+        // not declared: equality only, through containment of a JSON document
+        let (sql, params) = compile("status = valid").unwrap();
+        assert!(sql.contains("m.payload @> $1"), "{sql}");
+        assert_eq!(params, vec![r#"Object {"status": String("valid")}"#]);
+        let err = compile("status > 3").unwrap_err().to_string();
+        assert!(err.contains("not declared"), "{err}");
+    }
+
+    #[test]
+    fn functions() {
+        let (sql, params) = compile("permitted(train, purpose=commercial)").unwrap();
+        assert!(sql.starts_with("(v.source_id in (select g.source_id from usage_grant g where g.action = $1 and (g.purpose = $2 or g.purpose = 'any')"), "{sql}");
+        assert!(sql.contains("g.revoked_commit is null"), "revoked grants do not count: {sql}");
+        assert!(sql.contains("from invalidation where target_kind = 'version'"), "invalidated content does not count: {sql}");
+        assert_eq!(params, vec![r#""train""#, r#""commercial""#]);
+        let (sql, params) = compile("tag(sensitivity, restricted)").unwrap();
+        assert!(sql.contains("t.name = $1 and t.value = $2"), "{sql}");
+        assert_eq!(params, vec![r#""sensitivity""#, r#""restricted""#]);
+        let (_, params) = compile("derived_from(/raw/a.bin)").unwrap();
+        assert_eq!(params, vec![r#""/raw/a.bin""#]);
+        let (_, params) = compile("used_in(/models/m1, role=evaluation)").unwrap();
+        assert_eq!(params, vec![r#""/models/m1""#, r#""evaluation""#]);
+    }
+
+    #[test]
+    fn queries_that_are_refused() {
+        for (q, why) in [
+            ("permitted(train)", "needs a purpose"),
+            ("frobnicate(x)", "unknown function"),
+            ("size ~~ 3", "unknown operator"),
+            ("size >", "no value"),
+            ("(size > 3", "not closed"),
+            ("> 3", "starts with a name"),
+        ] {
+            let e = compile(q).err().unwrap_or_else(|| panic!("{q:?} must be refused")).to_string();
+            assert!(e.contains(why), "{q:?}: {e}");
+        }
+    }
+}

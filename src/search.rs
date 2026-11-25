@@ -625,3 +625,43 @@ pub async fn search(sess: &Session, req: &SearchRequest) -> Result<SearchResult>
     }
     Ok(SearchResult { hits, removed_by_check: removed + denied_by_filter, ranking: "reciprocal rank fusion of lexical, tolerant (trigram) and vector ranks".into() })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_name_splits_separators_case_and_digits() {
+        assert_eq!(split_name("rawFrames_2026"), "raw frames 2026");
+        assert_eq!(split_name("IMG_0042.jpg"), "img 0042 jpg");
+        assert_eq!(split_name("a--b  c"), "a b c");
+        assert_eq!(split_name("v2beta"), "v 2 beta");
+        assert_eq!(split_name(""), "");
+        assert_eq!(split_name("___"), "");
+    }
+
+    #[test]
+    fn embed_is_a_normalised_deterministic_vector() {
+        let v = embed("raw camera frames");
+        assert_eq!(v.len(), DIM);
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "norm {norm}");
+        assert_eq!(v, embed("raw camera frames"), "the same text gives the same vector");
+        assert_eq!(v, embed("rawCamera_Frames"), "names are split before they are embedded");
+        // words of one character are ignored, and an empty text has the zero vector
+        assert!(embed("").iter().all(|x| *x == 0.0));
+        assert!(embed("a b").iter().all(|x| *x == 0.0));
+    }
+
+    #[test]
+    fn cosine_orders_similar_texts_first() {
+        let q = embed("raw camera frames");
+        assert!((cosine(&q, &q) - 1.0).abs() < 1e-5);
+        let near = cosine(&q, &embed("raw camera frame"));
+        let far = cosine(&q, &embed("quarterly budget forecast"));
+        assert!(near > 0.7, "near {near}");
+        assert!(far < near - 0.3, "far {far}, near {near}");
+        assert_eq!(cosine(&q, &embed("")), 0.0);
+        assert_eq!(cosine(&[1.0, 0.0], &[0.0, 1.0]), 0.0);
+    }
+}

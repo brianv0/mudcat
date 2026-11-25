@@ -267,3 +267,76 @@ impl ManifestStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store(name: &str) -> ObjectStore {
+        let root = std::env::temp_dir().join(format!("mudcat-unit-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let s = ObjectStore::new(root, b"unit-test-secret".to_vec());
+        s.create_bucket("b", BucketConfig::default()).unwrap();
+        s.create_bucket("other", BucketConfig::default()).unwrap();
+        s.create_bucket("hpc", BucketConfig { versioned: false, posix: true }).unwrap();
+        s.put("producer", "b", "data/a.bin", b"aaa").unwrap();
+        s.put("producer", "b", "secret/s.bin", b"sss").unwrap();
+        s.put("producer", "other", "data/a.bin", b"ooo").unwrap();
+        s.put("producer", "hpc", "x/y.bin", b"hhh").unwrap();
+        s
+    }
+
+    #[test]
+    fn prefix_credential_reads_inside_its_prefix_only() {
+        let s = store("prefix");
+        let c = s.prefix_credential("b", "data/", 1000);
+        assert_eq!(s.get("job", "s3://b/data/a.bin", &c, 500).unwrap(), b"aaa");
+        for url in ["s3://b/secret/s.bin", "s3://other/data/a.bin"] {
+            assert_eq!(s.get("job", url, &c, 500).unwrap_err().code(), "access-denied", "{url}");
+        }
+        // the whole bucket needs a credential for the prefix ""
+        assert!(s.get("job", "s3://b/secret/s.bin", &s.prefix_credential("b", "", 1000), 500).is_ok());
+        // a credential whose prefix was changed does not carry the signature of the new prefix
+        let Credential::Prefix { bucket, expires, sig, .. } = c.clone() else { panic!() };
+        let forged = Credential::Prefix { bucket, prefix: "".into(), expires, sig };
+        assert_eq!(s.get("job", "s3://b/secret/s.bin", &forged, 500).unwrap_err().code(), "access-denied");
+    }
+
+    #[test]
+    fn signed_url_reads_its_own_object_only() {
+        let s = store("signed");
+        let c = s.signed_url("s3://b/data/a.bin", 1000);
+        assert_eq!(s.get("job", "s3://b/data/a.bin", &c, 500).unwrap(), b"aaa");
+        for url in ["s3://b/secret/s.bin", "s3://other/data/a.bin", "s3://b/data/a.bin.x"] {
+            assert_eq!(s.get("job", url, &c, 500).unwrap_err().code(), "access-denied", "{url}");
+        }
+    }
+
+    #[test]
+    fn expired_and_foreign_credentials_are_refused() {
+        let s = store("expired");
+        let p = s.prefix_credential("b", "data/", 1000);
+        let u = s.signed_url("s3://b/data/a.bin", 1000);
+        // the last second is still valid; one second later it is not
+        assert!(s.get("job", "s3://b/data/a.bin", &p, 1000).is_ok());
+        assert_eq!(s.get("job", "s3://b/data/a.bin", &p, 1001).unwrap_err().code(), "access-denied");
+        assert_eq!(s.get("job", "s3://b/data/a.bin", &u, 1001).unwrap_err().code(), "access-denied");
+        // a credential signed with another secret is refused
+        let root = std::env::temp_dir().join(format!("mudcat-unit-{}-expired", std::process::id()));
+        let other = ObjectStore::new(root, b"another-secret".to_vec());
+        assert_eq!(s.get("job", "s3://b/data/a.bin", &other.prefix_credential("b", "data/", 1000), 500).unwrap_err().code(), "access-denied");
+        // the site credential works only on a POSIX resource, where the site enforces access
+        assert_eq!(s.get("job", "s3://b/data/a.bin", &Credential::Site, 500).unwrap_err().code(), "access-denied");
+        assert_eq!(s.get("job", "file:///hpc/x/y.bin", &Credential::Site, 500).unwrap(), b"hhh");
+    }
+
+    #[test]
+    fn urls() {
+        assert_eq!(url_of("b", "k/x", false), "s3://b/k/x");
+        assert_eq!(url_of("hpc", "k/x", true), "file:///hpc/k/x");
+        assert_eq!(parse_url("s3://b/k/x").unwrap(), ("b".to_string(), "k/x".to_string()));
+        assert_eq!(parse_url("file:///hpc/k").unwrap(), ("hpc".to_string(), "k".to_string()));
+        assert!(parse_url("http://b/k").is_err());
+        assert!(parse_url("s3://b").is_err());
+    }
+}

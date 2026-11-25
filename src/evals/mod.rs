@@ -338,3 +338,56 @@ pub fn stamp(scale: &str) -> Value {
 pub fn db_url_for(server: &str, name: &str) -> String {
     crate::instance::db_url(server, name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn template() -> Template {
+        serde_json::from_value(json!({
+            "id": "T9.9",
+            "checks": [
+                {"check": "always"},
+                {"check": "only refused", "outcome": "refused"},
+                {"check": "refused or blocked", "outcome": ["refused", "blocked"]},
+                {"check": "train only", "when": {"action": "train"}},
+                {"check": "train or evaluate, ten members", "when": {"action": ["train", "evaluate"], "members": 10}},
+                {"check": "refused and a person", "outcome": "refused", "when": {"who": "person"}},
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn variant(expected: &str, params: serde_json::Value) -> Variant {
+        serde_json::from_value(json!({
+            "id": "T9.9#001", "template": "T9.9", "use_case": 9, "goal": "g", "params": params,
+            "fixture": "f", "expected": expected, "checks": [], "invariants": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn applicable_selects_checks_by_outcome_and_parameters() {
+        let t = template();
+        let v = variant("permitted", json!({"action": "train", "members": 10, "who": "agent"}));
+        assert_eq!(t.applicable(&v), vec!["always", "train only", "train or evaluate, ten members"]);
+        let v = variant("refused", json!({"action": "evaluate", "members": 10, "who": "person"}));
+        assert_eq!(t.applicable(&v), vec!["always", "only refused", "refused or blocked", "train or evaluate, ten members", "refused and a person"]);
+        // a number in the template matches the number of the variant, and not another one
+        let v = variant("blocked", json!({"action": "train", "members": 10000, "who": "person"}));
+        assert_eq!(t.applicable(&v), vec!["always", "refused or blocked", "train only"]);
+    }
+
+    #[test]
+    fn scale_caps_the_sizes() {
+        assert_eq!(Scale::parse("smoke"), Some(Scale::Smoke));
+        assert_eq!(Scale::parse("quick"), Some(Scale::Quick));
+        assert_eq!(Scale::parse("full"), Some(Scale::Full));
+        assert_eq!(Scale::parse("huge"), None);
+        assert_eq!(Scale::Full.size(10_000, 2000, 50), 10_000);
+        assert_eq!(Scale::Quick.size(10_000, 2000, 50), 2000);
+        assert_eq!(Scale::Smoke.size(10_000, 2000, 50), 50);
+        assert_eq!(Scale::Smoke.size(10, 2000, 50), 10, "a size below the cap stays as it is");
+    }
+}

@@ -1175,4 +1175,16 @@ mod tests {
         // a change of one member hash changes the root
         assert_ne!(merkle(&[entry(1, "h1"), entry(2, "h2"), entry(3, "h4")]), want);
     }
+
+    // sha256 of {"a":1,"b":2}, from: printf '{"a":1,"b":2}' | sha256sum
+    #[test]
+    fn method_hash_ignores_the_order_of_keys() {
+        let h = method_hash(&json!({"b": 2, "a": 1}));
+        assert_eq!(h, method_hash(&json!({"a": 1, "b": 2})));
+        assert_eq!(h, "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777");
+        assert_ne!(h, method_hash(&json!({"a": 1, "b": 3})));
+        // a value that is not an object is the empty method
+        assert_eq!(method_hash(&json!(null)), method_hash(&json!({})));
+        assert_eq!(method_hash(&json!({})), "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a");
+    }
 }

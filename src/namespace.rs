@@ -993,3 +993,21 @@ pub async fn entity_kind(tx: &Tx<'_>, id: Uuid) -> Result<String> {
     }
     Ok(r.get(0))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_path_and_base_name() {
+        assert_eq!(parent_path("/"), None);
+        assert_eq!(parent_path("/a"), Some("/"));
+        assert_eq!(parent_path("/a/b"), Some("/a"));
+        assert_eq!(parent_path("/a/b/c.csv"), Some("/a/b"));
+        assert_eq!(parent_path("a"), None);
+        assert_eq!(base_name("/a/b/c.csv"), "c.csv");
+        assert_eq!(base_name("/a"), "a");
+        assert_eq!(base_name("name"), "name");
+        assert_eq!(base_name("/"), "");
+    }
+}
