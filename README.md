@@ -2,7 +2,7 @@
 
 **mudcat** is a design for an open-source **mu**ltimodal **d**ata **cat**alog. It is meant for scientific data management, data science and AI training data. It is a successor in spirit to SLAC's [Datacat](https://github.com/slaclab/datacat). It takes ideas from iRODS, Rucio, the Rubin Data Butler, DataHub and the lakehouse catalogs.
 
-Status: design sketch. There is no code yet.
+Status: design sketch with a working reference implementation in Rust (PostgreSQL is its only dependency). The implementation passes all 280 eval variants and the 16 invariants; see [docs/implementation.md](docs/implementation.md) and [docs/performance.md](docs/performance.md).
 
 ## What it is for
 
@@ -25,6 +25,19 @@ For any piece of data and any model, mudcat answers five questions:
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
 | [docs/requirements.md](docs/requirements.md) | The system requirements, written to the NASA guidance for requirements, with a rationale and a verification method for each |
 | [docs/fields.md](docs/fields.md) | Guidelines for each scientific and technical field: domain semantics, schema profiles, formats and examples |
+| [docs/implementation.md](docs/implementation.md) | The Rust implementation: how to run it, a map of the code onto the design, the decisions where the documents were silent, and what is not implemented |
+| [docs/performance.md](docs/performance.md) | Measurements for the performance requirements PF-3 to PF-8 and the main flows |
+
+## Quick start
+
+```sh
+scripts/dev-db.sh start                         # a local PostgreSQL 16
+cargo build --release
+target/release/mudcat-evals --scale full        # the 280 eval variants with the invariants
+cargo test                                      # the 31 reference scenarios
+target/release/mudcat-bench                     # the benchmarks
+target/release/mudcat serve                     # the REST, change feed, Iceberg REST and MCP interfaces
+```
 
 The research behind the design is in the Datacat fork, at [brianv0/datacat, branch `claude/cool-keller-domhwr`](https://github.com/brianv0/datacat/tree/claude/cool-keller-domhwr). Its `reports/` directory holds the two reports and `research_notes/` holds the notes that support them.
 

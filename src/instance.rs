@@ -237,6 +237,15 @@ impl Instance {
         self.clock.now()
     }
 
+    /// The name of the database that holds a location.
+    pub fn db_name(&self, location: &str) -> String {
+        if location == "shared" {
+            self.base_url.rsplit('/').next().unwrap_or("mudcat").split('?').next().unwrap_or("mudcat").to_string()
+        } else {
+            location.to_string()
+        }
+    }
+
     pub fn tenant(&self, id: Uuid) -> Option<TenantInfo> {
         self.tenants.read().get(&id).cloned()
     }
@@ -341,7 +350,8 @@ impl Session {
         let t = client.transaction().await?;
         let tenant = self.tenant.map(|t| t.to_string()).unwrap_or_default();
         t.execute("select set_config('mudcat.tenant', $1, true)", &[&tenant]).await?;
-        Ok(Tx { t, sess: self, commit: None, now: self.now() })
+        let location = self.tenant.and_then(|t| self.inst.tenant(t)).map(|t| t.location).unwrap_or_else(|| "shared".into());
+        Ok(Tx { t, sess: self, commit: None, now: self.now(), location })
     }
 
     /// Write one entry to the audit log, in its own transaction, so that a denial stays in the
@@ -361,6 +371,8 @@ pub struct Tx<'a> {
     commit: Option<i64>,
     /// The time of the transaction, from the clock of the instance.
     pub now: DateTime<Utc>,
+    /// The database of the tenant when the transaction began.
+    pub location: String,
 }
 
 impl<'a> Tx<'a> {
@@ -394,8 +406,14 @@ impl<'a> Tx<'a> {
             return Ok(c);
         }
         let tenant = self.sess.tenant_id()?;
+        // the fence of a tenant move: writers hold a shared lock; the move takes it exclusively
+        let db: String = self
+            .t
+            .query_one("select current_database()::text from (select pg_advisory_xact_lock_shared(hashtextextended($1, 11))) x", &[&tenant.to_string()])
+            .await?
+            .get(0);
         if let Some(t) = self.sess.inst.tenant(tenant) {
-            if t.status == "moving" {
+            if t.status == "moving" || t.location != self.location || db != self.sess.inst.db_name(&t.location) {
                 return Err(Error::Retryable("the tenant is moving to another database; try again".into()));
             }
         }

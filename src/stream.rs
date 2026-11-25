@@ -14,8 +14,19 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
-/// Publish the committed events of the outbox. Returns the number of events published.
+/// Publish the committed events of the outbox, in batches. Returns the number published.
 pub async fn relay(sess: &Session) -> Result<usize> {
+    let mut total = 0;
+    loop {
+        let n = relay_batch(sess, 20_000).await?;
+        total += n;
+        if n < 20_000 {
+            return Ok(total);
+        }
+    }
+}
+
+async fn relay_batch(sess: &Session, limit: i64) -> Result<usize> {
     let sys = sess.as_principal(crate::instance::Principal::system());
     let mut c = sys.client().await?;
     let tx = sys.begin(&mut c).await?;
@@ -26,8 +37,9 @@ pub async fn relay(sess: &Session) -> Result<usize> {
         .q(
             "select seq, commit_id, event from outbox
               where xid < pg_snapshot_xmin(pg_current_snapshot())
-              order by coalesce(pg_xact_commit_timestamp((xid::text)::xid), 'epoch'::timestamptz), xid, seq",
-            &[],
+              order by coalesce(pg_xact_commit_timestamp((xid::text)::xid), 'epoch'::timestamptz), xid, seq
+              limit $1",
+            &[&limit],
         )
         .await?;
     if rows.is_empty() {

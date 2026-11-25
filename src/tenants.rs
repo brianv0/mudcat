@@ -78,17 +78,23 @@ pub async fn move_tenant(inst: &Arc<Instance>, tenant: Uuid, to_db: &str) -> Res
     apply_schema(&target).await?;
     let source = inst.pool_for(&from)?;
     set_status(inst, tenant, "moving", None).await?;
-    // wait for write transactions of the tenant that started before the move
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // wait for the write transactions of the tenant that passed the fence before the move
+    let fence = source.get().await?;
+    fence.execute("select pg_advisory_lock(hashtextextended($1, 11))", &[&tenant.to_string()]).await?;
     let fault = *inst.move_fault_at.read();
     let result = copy_tenant(inst, tenant, &source, &target, fault).await;
+    let unlock = |fence: deadpool_postgres::Object| async move {
+        let _ = fence.execute("select pg_advisory_unlock(hashtextextended($1, 11))", &[&tenant.to_string()]).await;
+    };
     match result {
         Err(e) => {
             set_status(inst, tenant, "active", None).await?;
+            unlock(fence).await;
             Err(e)
         }
         Ok(stats) => {
             set_status(inst, tenant, "active", Some(to_db)).await?;
+            unlock(fence).await;
             // remove the rows of the tenant from the old database
             let mut c = source.get().await?;
             let tx = c.transaction().await?;

@@ -1,6 +1,6 @@
 # mudcat evals
 
-Status: definitions only. There is no mudcat implementation yet, and no runner. The evals come from the five grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have three layers.
+Status: definitions, with a runner. `mudcat-evals` (src/bin/mudcat-evals.rs, drivers in src/evals/) runs every variant against the Rust implementation and checks the invariants after each step; the reference scenarios run as integration tests in tests/. The evals come from the five grounding use cases in [docs/use-cases.md](../docs/use-cases.md). They have three layers.
 
 | Layer | File | Content |
 |---|---|---|
@@ -147,9 +147,19 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A summary of training content states which runs have no resolution.
 - The tasks and the invariants cover 63 of the 128 requirements. Requirements for performance and for federation have no task yet.
 
+## The runner
+
+```sh
+python3 evals/generate.py --write                 # the variants (the runner does this if they are missing)
+target/release/mudcat-evals --scale full          # all variants; results in evals/results/latest-full.json
+target/release/mudcat-evals --template T3.2 --verbose
+target/release/mudcat-evals --scale quick         # large cover values capped at 2000, for a fast run
+```
+
+For each variant the runner makes a fresh tenant, builds the fixture from the parameters, lets a scripted actor reach the goal through the mudcat interfaces, and then compares the observed outcome with the oracle. A driver reports each check by a part of its text in tasks.yaml; a check that applies to the variant and that no driver evaluated counts as a failure. The actor is scripted, not an AI agent; the evals with an agent as actor are still to do.
+
 ## Not yet done
 
-- A runner, and a simulated mudcat that the runner can use before an implementation exists.
 - Random sequences of actions with the invariants as the only checks.
 - Tasks with a measured result: time, number of calls, cost. All checks are now true or false.
 - Tasks for the reserve use cases.
