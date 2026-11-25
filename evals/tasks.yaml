@@ -252,6 +252,8 @@
     - check: The commit of the second job succeeds.
     - outcome: [committed, committed-with-unchanged-entries]
       check: All entries are visible at one position of the change stream. The answer gives the outcome of each entry.
+    - outcome: [committed, committed-with-unchanged-entries]
+      check: The answer gives the commit ID. A list of the collection as of that commit has the new entries, and a list as of the commit before has none of them.
     - outcome: committed-with-unchanged-entries
       check: Each entry that was registered before has the outcome unchanged, and gets no new version and no event.
     - outcome: [committed, committed-with-unchanged-entries]
@@ -268,7 +270,7 @@
       when: {dataset: append-to-a-branch-ref}
       check: The branch ref of the dataset did not move.
   invariants: [INV-5, INV-13, INV-24]
-  verifies: [OP-16, OP-17, OP-18, OP-19, OP-20, OP-21, OP-5, IN-3]
+  verifies: [OP-16, OP-17, OP-18, OP-19, OP-20, OP-21, OP-5, IN-3, ID-20, ID-22]
   reference: UC1-01
 
 - id: T1.8
@@ -1505,6 +1507,46 @@
   invariants: [INV-3, INV-17]
   verifies: [QY-11, PR-3, PR-8, UP-9]
   reference: UC7-02
+
+- id: T7.7
+  use_case: 7
+  name: only-what-is-new
+  goal: A job that runs again and again processes each new file of a collection one time.
+  axes:
+    between_runs: [nothing, one-commit, commits-from-many-writers, a-commit-and-a-delete-marker, a-refused-commit, a-new-version-of-an-old-file]
+    method: [changes-between-two-commits, two-lists-as-of-two-commits]
+    writes_during_the_read: [none, more-commits]
+  fixture: >
+    A collection with 10,000 files. A job read it at the commit C1 and kept that ID. Between the runs:
+    {between_runs}. In its next run, the job finds what is new with {method}, in pages of 500. Writes
+    to the collection while the job reads its pages: {writes_during_the_read}.
+  oracle:
+    - if: {between_runs: [nothing, a-refused-commit]}
+      then: {outcome: nothing-new}
+    - else: {outcome: exactly-the-changes}
+  checks:
+    - check: The answer gives a commit ID C2. A run that starts from C2 gets no entry that this run got.
+    - check: Over all runs, the job gets each committed change one time.
+    - outcome: nothing-new
+      check: The job gets no entry.
+    - outcome: nothing-new
+      when: {between_runs: a-refused-commit}
+      check: No entry of the refused commit is in an answer.
+    - outcome: exactly-the-changes
+      check: The job gets each entry that a commit after C1 and up to C2 added, changed or removed, and no other entry.
+    - outcome: exactly-the-changes
+      when: {between_runs: a-commit-and-a-delete-marker}
+      check: The file with the delete marker is in the answer as removed.
+    - outcome: exactly-the-changes
+      when: {between_runs: a-new-version-of-an-old-file}
+      check: The file is in the answer as changed, with the old version and the new version.
+    - when: {writes_during_the_read: more-commits}
+      check: All pages are as of C2. No entry of a commit after C2 is in a page, and no entry is in two pages.
+    - when: {method: two-lists-as-of-two-commits}
+      check: The list as of C1 is the same as the list that the job got in its first run.
+  invariants: [INV-24, INV-25]
+  verifies: [ID-20, ID-21, ID-22, EV-23, EV-14, OP-16]
+  reference: UC7-01
 
 # ---------------------------------------------------------------- use case 8
 

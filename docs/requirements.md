@@ -60,6 +60,9 @@ Identifier prefixes:
 | ID-17 | mudcat shall make no snapshot for a commit whose updates change nothing. | Repeated appends of the same members must not fill the history of a dataset with empty snapshots. | T |
 | ID-18 | mudcat shall return, for each commit, the snapshot that the commit made and the snapshot that mudcat applied the updates to. | A client must know when its change was applied to a newer state than the state that it read. | T |
 | ID-19 | mudcat shall name, in each conflict, the requirement that is false and the commit that made it false. | A writer must know what to read again, and if its own earlier commit is the cause. | T |
+| ID-20 | mudcat shall return, with the answer to each request that changes the catalog, the ID of the commit that made the change. | A client needs a name for the state that its write made: as the base of its next commit, and to give to a reader; Iceberg gives clients the snapshot ID for the same purpose. | T |
+| ID-21 | mudcat shall return, with the answer to each read request, the ID of the newest commit that the answer includes. | Optimistic concurrency needs a name for the state that the client read, also for a collection, which has no stored snapshots. | T |
+| ID-22 | mudcat shall answer a read request as of the commit or the snapshot that the request names. | The pages of one list must agree with each other, and a job must be able to read exactly the output of one commit. | T |
 
 ## Structure and metadata
 
@@ -217,6 +220,7 @@ Identifier prefixes:
 | EV-20 | mudcat shall return a page of the size of the request when that number of matches that the caller can read exists. | A search that removes results after it ranks them returns short pages to a caller who can read a small part of the catalog. | T |
 | EV-21 | mudcat shall answer a search request that asks for all matches from the catalog database. | An audit needs each match, and a derived index can be behind the catalog. | T |
 | EV-22 | mudcat shall return, with each ranked search answer, the position in the change stream that the search index has processed. | A client that wrote a change must be able to know if the answer includes that change. | T |
+| EV-23 | mudcat shall return, in pages, the entries that were added, changed and removed under a collection between two commits that the request names. | A job that runs again and again must process each new file one time, with no need for a consumer of the change stream. | T |
 
 ## Operation and deployment
 

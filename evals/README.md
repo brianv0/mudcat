@@ -4,8 +4,8 @@ Status: definitions only. There is no mudcat implementation yet, and no runner. 
 
 | Layer | File | Content |
 |---|---|---|
-| Invariants | [invariants.yaml](invariants.yaml) | 24 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 41 tasks with variation. `generate.py` expands them into 670 variants |
+| Invariants | [invariants.yaml](invariants.yaml) | 25 statements that are true after each step of each eval |
+| Task templates | [tasks.yaml](tasks.yaml) | 42 tasks with variation. `generate.py` expands them into 694 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
 | Benchmarks | [benchmarks/](benchmarks/) | Measured evals. The first one is for search: 13 query classes, 17 measures and 21 targets |
 | Conformance suites | [conformance/](conformance/) | Suites from other projects that mudcat must pass. The first one is the Iceberg REST Compatibility Kit |
@@ -97,13 +97,14 @@ These rules make a task effective:
 | T7.4 end-of-lifetime | Remove the bytes of intermediates and caches, and lose no lineage | lifetime class, event, lock | number of runs | 10 |
 | T7.5 never-deployed | Find the runs and the data that led to nothing | use of the model, age, protection, lifetime class | | 32 |
 | T7.6 bad-input | Find each run, model and deployment that used a bad input | time of the finding, path, action | | 14 |
+| T7.7 only-what-is-new | A job processes each new file of a collection one time | changes between runs, method, writes during the read | | 24 |
 | T8.1 publish-a-description | Make a dataset public for dataset search engines | name, description text, licence, audience | | 24 |
 | T8.2 correct-and-cite | Publish a correction and keep old citations correct | kind of change, kind of citation | | 8 |
 | T8.3 copy-or-based-on | State how a dataset relates to its origin | real relation, origin, statement of the owner | | 20 |
 | T8.4 import-and-train | Train on a public dataset together with own data | licence, purpose, reach of the files | format of the description | 17 |
 | T8.5 the-original-changes | Know when a public dataset changed or went away | state of the original, use in the tenant | | 10 |
 
-Variants for each use case: 110, 51, 120, 59, 71, 101, 79 and 79.
+Variants for each use case: 110, 51, 120, 59, 71, 101, 103 and 79.
 
 `generate.py` has these options:
 
@@ -206,7 +207,7 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A request for own data and public data together is refused completely when the terms of the public data do not permit it.
   - A person with no access to a discovered dataset does not find it in a search. Goods showed the metadata of each dataset to each engineer.
   - When the content of a public dataset changes with no new version, mudcat keeps the old checksums and makes new versions.
-- The tasks and the invariants cover 129 of the 190 requirements. Requirements for performance and for federation have no task yet.
+- The tasks and the invariants cover 134 of the 194 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 

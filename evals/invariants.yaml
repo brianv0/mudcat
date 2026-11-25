@@ -121,3 +121,8 @@
   statement: A reader sees all entries of a registration commit or none of them.
   observe: A reader lists the collection and the dataset again and again while commits run. Each answer has all entries of each commit that it shows.
   verifies: [OP-16, OP-21]
+
+- id: INV-25
+  statement: Two reads as of the same commit give the same entries, except for content that policy removed in between.
+  observe: Repeat each read with its commit ID after later commits, and compare the answers.
+  verifies: [ID-22, UP-12]

@@ -134,7 +134,7 @@ Iceberg calls this a server-side retry. In the reference server of Iceberg it is
 | Change the structure | `assert-structure` |
 | Replace all members | `assert-ref-snapshot` |
 
-**The answer to a commit** gives the snapshot that the commit made and the snapshot that mudcat applied the updates to. The second one can be newer than the snapshot that the client read. A conflict names the requirement that is false, the member or the ref that it refers to, and the commit that changed it.
+**The answer to a commit** gives the ID of the commit, the snapshot that the commit made and the snapshot that mudcat applied the updates to. The second one can be newer than the snapshot that the client read. A conflict names the requirement that is false, the member or the ref that it refers to, and the commit that changed it.
 
 **The same rule applies outside datasets.** A new version of an artifact is a commit with a requirement on `latest`, or with none. A change to collections has `assert-create` for each new path. A write to a metadata payload has a requirement on the revision of that payload. Tables that their own engine maintains, such as Lance and Delta tables, do not get their commits through mudcat. Iceberg tables get them through the gateway, with the requirements of the Iceberg specification.
 
@@ -144,6 +144,21 @@ Iceberg calls this a server-side retry. In the reference server of Iceberg it is
 - **A wide requirement can fail again and again.** A writer with `assert-ref-snapshot` on a branch with many appends gets a conflict at each attempt. Such a writer must use a narrower requirement, or work on its own branch ref and move the main branch ref in one commit at the end.
 - **The number of requirements has a limit.** A commit with more than TBD `assert-member` requirements must use `assert-unchanged-in`.
 - **`assert-unchanged-in` needs history.** mudcat tests it with the change summaries and the manifest summaries of the commits after the given snapshot. If that snapshot expired, the requirement is false.
+
+**Clients get the IDs.** Optimistic concurrency needs a name for the state that a client read. For a dataset, this name is the snapshot ID. For a collection, it is the commit ID, which names an implicit snapshot of each collection (model, section 4). mudcat gives these IDs to clients in each answer, and accepts them in each request:
+
+| Where | What the client gets or gives | Use |
+|---|---|---|
+| The answer to each write | The ID of the commit, and the snapshot ID for a dataset | The base of the next commit. A token to give to a reader |
+| The answer to each read | The ID of the newest commit that the answer includes | The base of a later requirement. A second read of the same state |
+| A read request | `as_of` with a commit ID or a snapshot ID | Pages of one list that agree with each other. A job that reads exactly the output of one commit |
+| A requirement | A commit ID or a snapshot ID as the base of `assert-unchanged-in` | "Commit only if nothing changed under this collection after I listed it" |
+| A request for changes | Two commit IDs | The entries that were added, changed and removed under a collection between them. A job uses this to process only what is new |
+| A conflict | The ID of the commit that made the requirement false | The writer sees what to read again |
+
+A commit ID is the same kind of token for a derived index: a ranked search answer gives the commit that the index has processed, and a client can wait for the commit that it made.
+
+**The order of commits.** A commit gets its ID when it commits, and its position in the order of commits a moment later, from the relay (see Change stream). A read as of a commit needs that position. A read directly after a commit thus waits for the relay, normally for some milliseconds.
 
 **A repeated commit is safe.** A commit can carry an idempotency key. For a second commit with the same key, mudcat returns the result of the first commit and makes no snapshot. The Iceberg REST specification has the same function for requests that change state. A commit whose updates change nothing makes no snapshot, and returns the present one.
 
@@ -223,6 +238,8 @@ Thus the tasks of a job never commit. Only the driver commits, one time. Spark a
 **Registration and membership in one commit.** A registration commit can also append the new versions to a branch ref of a dataset. A reader then never sees files that are in the collection and not yet in the dataset. An append has no requirement on other members, so it does not conflict with other appends.
 
 **Visibility.** Staged entries are rows in the catalog database with the ID of their part. A reader sees an entry only when a commit record refers to its part. Thus the commit itself writes few rows, and the time for which it holds a lock does not grow with the number of entries. The checks for conflicts run before the lock, and run again only for the paths that changed in between.
+
+**The answer names the commit.** The commit ID in the answer names the implicit snapshot of each collection that the commit changed. A reader that gets this ID can list exactly the state after the commit, and a later job can ask for the entries that came after it.
 
 **Staged parts expire.** mudcat removes a staged part that no commit used after TBD hours. The files that the part describes are then files with no catalog entry, and the consistency check of the site agents reports them.
 

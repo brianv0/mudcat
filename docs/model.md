@@ -338,7 +338,9 @@ Each output value records the enricher and its version as its assertion origin. 
 - **Atomic changes.** One conditional commit can add or change many artifacts in one or more collections, in one transaction. All of them appear at the same time.
 - **Snapshot on request.** A user can make a snapshot of a collection subtree as of a time. mudcat then makes a dataset whose snapshot contains the versions that the subtree held at that time, with a Merkle hash. The Butler's collection-snapshot proposal does the same. Such a snapshot can be published and cited like any other.
 
-mudcat does not make a snapshot for each change to a collection, for two reasons:
+- **Implicit snapshots.** Each commit to the catalog has an ID, and it is a point in the history of the tenant. A collection at a commit is an **implicit snapshot**, written `collection@commit`. mudcat stores nothing for it and computes no hash. But a client can name it: to list the collection as it was at that commit, to ask what changed after it, and to make a requirement that refers to it. Each answer to a write and to a read gives its commit ID. A snapshot on request turns an implicit snapshot into a real one.
+
+mudcat does not make a stored snapshot for each change to a collection, for two reasons:
 
 - **Hot spots.** A hash over a subtree changes with each write under it. Every writer would then need a conditional update of the same ref at the root, and concurrent writers would conflict all the time.
 - **Size.** A collection that receives data all the time would make one snapshot for each change. The Butler team names one large, growing collection of raw data as a failure case. For such a collection, a dataset series with one snapshot for each period (for example one each day) is better.
