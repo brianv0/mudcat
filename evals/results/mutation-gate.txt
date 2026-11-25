@@ -1,4 +1,4 @@
-mutation gate: b25d65c8b2123b86b4cc251f58fff2b2c7f3065a dirty=yes smoke scale 2026-11-25T18:18:48Z
+mutation gate: 7696515c4967ccce848c5313df23f854255d2d9e dirty=no smoke scale 2026-11-25T18:57:47Z
 templates: failed variants in parentheses; tests: failed test names
 
 defect            | templates that failed                     | tests that failed                                         | result
