@@ -6,3 +6,4 @@ evals/results/partial.json
 evals/results/latest-quick.json
 evals/results/latest-smoke.json
 evals/results/mutation-gate.tmp/
+evals/results/mutation-gate.partial.txt

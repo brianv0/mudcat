@@ -324,8 +324,8 @@ pub async fn run_variant(base: &Arc<Instance>, tpl: &Template, v: &Variant, scal
 /// the working tree had changes, the scale and the date.
 pub fn stamp(scale: &str) -> Value {
     let git = |args: &[&str]| std::process::Command::new("git").args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    // untracked files in evals/results or target do not count; those are outputs
-    let dirty = git(&["status", "--porcelain", "--untracked-files=no"]).map(|s| !s.is_empty());
+    // results are outputs, also the ones that are in the repository; untracked files do not count
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no", "--", ":(top)", ":(top,exclude)evals/results"]).map(|s| !s.is_empty());
     serde_json::json!({
         "git_commit": git(&["rev-parse", "HEAD"]),
         "git_dirty": dirty,

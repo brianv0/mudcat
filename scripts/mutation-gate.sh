@@ -10,6 +10,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# The stamp is taken now, before the script replaces its own result file (which is in the
+# repository): the commit, and whether tracked files other than the results had changes.
+STAMP="$(git rev-parse HEAD) dirty=$([ -n "$(git status --porcelain --untracked-files=no -- ':(top)' ':(top,exclude)evals/results')" ] && echo yes || echo no)"
+
 ALL=(no-invalidation expired-grant-ok no-compartment search-no-recheck no-stream-filter wide-prefix merkle-constant tag-ref-movable no-branch-lock relay-xid-rule)
 RUNS_TIMING=3   # defects that depend on timing run this many times
 TIMING=(relay-xid-rule)
@@ -82,7 +86,7 @@ for name in - "${DEFECTS[@]}"; do
 done
 
 {
-  echo "mutation gate: $(git rev-parse HEAD) dirty=$([ -n "$(git status --porcelain --untracked-files=no)" ] && echo yes || echo no) smoke scale $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "mutation gate: $STAMP smoke scale $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "templates: failed variants in parentheses; tests: failed test names"
   echo
   python3 - "$ROWS" <<'PY'
