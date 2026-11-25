@@ -22,6 +22,8 @@ struct Consumer {
     max_seen: i64,
     lower_seen: bool,
     duplicates: usize,
+    /// the sequence of the last document event that the consumer applied
+    last_artifact_seq: i64,
     paths: BTreeSet<String>,
 }
 
@@ -36,6 +38,7 @@ impl Consumer {
             if e["kind"] != "artifact" {
                 continue;
             }
+            self.last_artifact_seq = self.last_artifact_seq.max(p);
             let id: Uuid = e["subject"].as_str().and_then(|s| s.parse().ok()).unwrap_or_default();
             let rev = e["revision"].as_i64().unwrap_or(0);
             match self.docs.get(&id) {
@@ -52,6 +55,25 @@ impl Consumer {
                 }
             }
         }
+    }
+    /// The consumer stops, and starts again from a position that is lower than the sequence of
+    /// the last document event that it applied, so that this event and a few before it come a
+    /// second time: certain by construction, whatever the timing was. It first waits until it has
+    /// applied a document event (the writers write some before they finish).
+    async fn restart_below_last_applied(&mut self, s: &Session) -> Result<()> {
+        let started = std::time::Instant::now();
+        while self.last_artifact_seq == 0 {
+            let p = stream::poll(s, self.position, 500, None, false).await?;
+            self.apply(&p.events);
+            self.position = p.next;
+            if started.elapsed() > std::time::Duration::from_secs(60) {
+                return Err(Error::invalid("the consumer applied no document event in 60 seconds"));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        self.position = (self.last_artifact_seq - 1).min(self.last_artifact_seq.saturating_sub(6)).max(0);
+        self.max_seen = self.position;
+        Ok(())
     }
     async fn poll_all(&mut self, s: &Session) -> Result<()> {
         stream::flush(s).await?;
@@ -120,7 +142,6 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
     let consumer_session = ctx.session("user:admin");
     if consumer_state == "current" || consumer_state == "stops-and-restarts" {
         // the consumer polls while the writers write
-        let mut stored = 0i64;
         let mut polls = 0;
         loop {
             let finished = handles.iter().all(|h| h.is_finished());
@@ -131,15 +152,12 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
             }
             consumer.position = p.next;
             polls += 1;
-            if polls % 3 == 0 {
-                stored = consumer.position; // the consumer stores its position now and then
-            }
             // (if the writers finish before the sixth poll, it stops after its last poll)
             if consumer_state == "stops-and-restarts" && (polls == 6 || finished) && !restart_seen {
-                // it stops, and starts again from its stored position: it gets some events a second time
+                // it stops, and starts again from a position below the last one that it applied:
+                // it gets some events a second time
                 restart_seen = true;
-                consumer.position = stored.saturating_sub(5).max(0);
-                consumer.max_seen = consumer.position;
+                consumer.restart_below_last_applied(&consumer_session).await?;
             }
             if finished {
                 break;
@@ -147,10 +165,9 @@ pub async fn stream_consumer(ctx: &mut Ctx) -> Result<()> {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         if consumer_state == "stops-and-restarts" && !restart_seen {
-            // the writers finished first: the consumer stops now, and starts again from its stored position
+            // the writers finished first: the consumer stops now, and starts again
             restart_seen = true;
-            consumer.position = stored.saturating_sub(5).max(0);
-            consumer.max_seen = consumer.position;
+            consumer.restart_below_last_applied(&consumer_session).await?;
         }
     }
     for h in handles {
