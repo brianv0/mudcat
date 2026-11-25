@@ -199,7 +199,8 @@ The first probe seeded ten defects, one at a time, and ran the 280 variants and 
 | `relay-xid-rule` | by chance only (one T4.1 variant in 2 of 3 runs at the smoke scale) | `tests/stream_order.rs`, with a fixed interleaving of three transactions; it fails every time with the defect |
 | `no-stream-filter`, `tag-ref-movable` | no | only the scenario tests (uc4_05, uc2_06) |
 | `no-home-check` | T5.4, the variants with writes (a second server process writes during and after the move) | `tests/tenant_move_processes.rs` |
-| `no-move-fence`, `cleanup-no-drain` | no | `tests/tenant_move_processes.rs`, with fixed steps |
+| `no-move-fence` | by timing only (one variant of T5.4 in each of two runs: a write of the second process during the copy) | `tests/tenant_move_processes.rs`, with fixed steps |
+| `cleanup-no-drain` | no | `tests/tenant_move_processes.rs`, with fixed steps |
 
 What stays weak:
 
@@ -209,12 +210,13 @@ What stays weak:
 - **Interleavings.** The order of events and the fence of a tenant move have tests with fixed steps. The branch requirement of commits has none (T1.2 detects `no-branch-lock` only by load, with 2 to 32 writers).
 - **Same author.** The drivers and the checks have the same author as the implementation, and in places they read and write the database directly, not only through the interfaces of mudcat. A pass is weaker evidence than its number suggests.
 - **Unit tests.** `query.rs` is tested for the SQL text and parameters of the predicate only; its path-glob part is built inside `run`, which needs a transaction, and has scenario tests only.
-- **CI.** The workflows in `.github/workflows/` were written and parsed, not run on a hosted runner, in the session that made them.
+- **CI.** The workflow `ci` runs on each push on GitHub's runners and has passed there (build, `cargo test`, the smoke scale). The workflow `mutation-gate` has not run there: a workflow that is started by hand must be on the default branch first.
 
 ## Not yet done
 
-- More seeded defects, so that each requirement that a task verifies has one that the task detects (the gate has ten).
-- Tests with fixed interleavings for the branch requirement of commits and for the fence of a tenant move; variants that detect `no-stream-filter` and `tag-ref-movable`.
+- More seeded defects, so that each requirement that a task verifies has one that the task detects (the gate has thirteen).
+- A test with fixed interleavings for the branch requirement of commits; variants that detect `no-stream-filter` and `tag-ref-movable`.
+- A check for each assumption that all checks share (one database server, one database role, the clock of the instance, storage in the same process), or a statement of it as a limit.
 - Variants that act and observe only through the public interfaces, with a stable ID for each check.
 - Random sequences of actions with the invariants as the only checks.
 - Tasks with a measured result: time, number of calls, cost. All checks are now true or false.
