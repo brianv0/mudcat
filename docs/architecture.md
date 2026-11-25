@@ -157,7 +157,7 @@ The catalog database is PostgreSQL with one schema per model area: namespace and
 - **Metadata:** the catalog stores each metadata payload as one JSONB document, with a key of (entity, namespace). One kind of index is not enough for all cases (see Metadata indexes, below).
 - **Partitioning:** from the first schema version, the catalog partitions large tables (versions, replicas, relations) by tenant and namespace.
 - **Tenant key:** the tenant ID is the first column of every primary key and of every index. Thus the rows of one tenant are together, and a move of a tenant copies them without a change to keys.
-- **Foreign keys:** only between mutable rows of the same tenant. References to immutable records and references between tenants have no foreign key (model, Cheap copies).
+- **Foreign keys:** inside one tenant, with the tenant ID as part of each foreign key. References between tenants, references to more than one kind of entity, and some references in the largest tables have no foreign key (model, Cheap copies).
 - **Commits and positions:** each transaction that changes the catalog writes one commit record: commit ID, tenant, actor and time. History rows carry the commit ID, not a wall-clock time. "As of time T" is the last commit at or before T.
 - **Outbox:** every transaction appends its events to an outbox table, with the transaction ID of the database. A relay publishes them on the change stream, and assigns their positions (see Change stream).
 

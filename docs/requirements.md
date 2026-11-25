@@ -192,7 +192,7 @@ Identifier prefixes:
 | OP-12 | mudcat shall resolve the tenant of a request in one layer, from the hostname of the request and the audience of its token. | Code below that layer must not need to know about tenants, and a header from a gateway is not proof. | I |
 | OP-13 | mudcat shall use the same database schema for one tenant and for many tenants. | A self-hosted installation must be able to add a tenant, or move into a hosted service, without a migration. | I |
 | OP-14 | mudcat shall move a tenant to another database without a change to the keys of its records. | Tenants move between the shared tier and dedicated databases. | D |
-| OP-15 | mudcat shall not remove a manifest or a version while a reference in any tenant names it. | Copies share immutable data by reference, and the database has no foreign key for these references. | T |
+| OP-15 | mudcat shall not remove a manifest or a version while a reference in any tenant names it. | Copies share immutable data by reference, and a reference between tenants has no foreign key. | T |
 | OP-9 | mudcat shall connect site agents to the control plane only through connections that the agents open. | Customers must not need to open inbound ports. | D |
 | OP-10 | mudcat shall export a complete tenant in a form that the self-hosted release can import. | Customers must be able to leave the hosted service without loss. | T |
 | OP-11 | mudcat shall keep the metadata of each tenant in the region that the tenant selects. | Metadata can be sensitive and subject to residency rules. | I |

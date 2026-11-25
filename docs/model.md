@@ -333,14 +333,23 @@ What this makes cheap:
 - **A selection.** A selection that follows partition values is a set of restricted references.
 - **A copy for another tenant.** A sandbox tenant, or a tenant that receives a shared dataset, refers to the manifests of the source tenant through a tenant mapping. Reads translate the tenant ID.
 
-**Fewer foreign keys.** A reference to an immutable record, and a reference that crosses tenants, is not a foreign key in the database. A foreign key would block a cheap copy, and it cannot cross databases. mudcat keeps these references correct in other ways:
+**Foreign keys.** A cheap copy inside one tenant does not need fewer foreign keys. A clone adds new references to manifests that exist, and a foreign key from a reference to its manifest is correct. That foreign key also stops the removal of a manifest that a reference still names. The Salesforce Database also keeps referential integrity as a constraint of its tables.
+
+- **Inside a tenant, foreign keys stay.** Each foreign key includes the tenant ID. Thus a row cannot refer to a row of another tenant by error.
+- **Some references cannot be foreign keys:**
+  - a reference to a record of another tenant, because each tenant must be able to move to another database alone;
+  - a reference to a record in another instance (federation);
+  - a reference that can point to more than one kind of entity, for example a member of a snapshot;
+  - a reference to an element, because elements are in manifest files and not in the database;
+  - a reference to an erased record.
+- **Some foreign keys are left out for speed.** The tables of versions and replicas can have 10^9 rows, and bulk registration writes them in large batches.
+
+For the references without a foreign key, mudcat uses these rules:
 
 - **Immutable targets.** A version, a manifest or a published snapshot never changes, so a reference to it cannot become wrong. It can only become dangling.
-- **No removal while referenced.** mudcat removes a manifest or a version only when no reference in any tenant names it (OP-15).
+- **No removal while referenced.** mudcat removes a manifest or a version only when no reference in any tenant names it (OP-15). The Salesforce Database has the same problem for storage files that several databases share, and must make sure that such a file is not deleted while a database still uses it.
 - **Checks.** A background worker finds references without a target, and reports them.
 - **Erasure records.** After an erasure, the erasure record tells why the target is gone.
-
-Foreign keys stay where both rows are mutable and are in the same tenant, for example from an artifact to its collection.
 
 **AnnotationSet** (`mc:AnnotationSet`). An independently versioned set of derived attributes: captions, labels, quality scores, embeddings, safety flags, new measurements. Its key is an element ID or a selector. Each has the activity that produced it. The addition of an annotation set creates a new snapshot that shares every other member with its parent. Exclusion lists for one dataset (for example opt-outs) are annotation sets. Takedowns use the tenant-wide invalidation set instead (section 5).
 
