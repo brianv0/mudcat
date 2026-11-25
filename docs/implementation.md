@@ -17,8 +17,14 @@ curl -H 'host: group-a.mudcat.localhost' -H "authorization: Bearer $TOKEN" local
 target/release/mudcat-evals --scale full        # all 280 variants with the invariants
 target/release/mudcat-evals --template T3.2 -v  # one template, each check
 target/release/mudcat-bench                     # the benchmarks of performance.md
-cargo test                                      # the 31 reference scenarios, and others, as integration tests
+cargo test                                      # unit tests, the 31 reference scenarios, and the test of event order
+
+# the checks, fast:
+target/debug/mudcat-evals --scale smoke --jobs 6   # all 280 variants, cover values capped at 50: about 1 minute (debug build)
+scripts/mutation-gate.sh                           # seeded defects, one at a time; about 40 minutes; evals/results/mutation-gate.txt
 ```
+
+The runner makes a database of its own for each run (`mudcat_evals_<time>_<pid>`) and drops it at the end; with `--db` or `MUDCAT_DB` it uses that database and leaves it. The tests read `MUDCAT_TEST_DB`. The results JSON of the runner and of the benchmarks records the git commit, whether the tree had changes, the scale and the date. The cargo feature `mutants` puts ten seeded defects behind `MUDCAT_MUTANT=<name>`; without the feature the switch is a constant `false` (`mudcat::mutant`). `scripts/mutation-gate.sh` uses it and fails if a defect is not detected; see [evals/README.md](../evals/README.md). CI (`.github/workflows/ci.yml`) runs `evals/check.py`, `cargo build`, `cargo test` and the smoke evals on PostgreSQL 16 for each push; the gate is a workflow that is started by hand.
 
 `mudcat authz-schema spicedb` and `mudcat authz-schema openfga` print the neutral authorization schema compiled for the two external services.
 

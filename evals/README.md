@@ -153,30 +153,63 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
 python3 evals/generate.py --write                 # the variants (the runner does this if they are missing)
 target/release/mudcat-evals --scale full          # all variants; results in evals/results/latest-full.json
 target/release/mudcat-evals --template T3.2 --verbose
-target/release/mudcat-evals --scale quick         # large cover values capped at 2000, for a fast run
+target/release/mudcat-evals --scale quick         # large cover values capped at 2000: about 4 minutes in a debug build
+target/debug/mudcat-evals --scale smoke           # cover values capped at 50, smaller drivers: about 1 minute in a debug build
+scripts/mutation-gate.sh                          # seeded defects: each must be detected (see below)
 ```
 
-The last full run passed 280 of 280 variants and 1,065 of 1,065 checks; it takes about 2 hours on 4 CPUs, mostly for the variants of T1.3 with 100,000 members and of T5.4 with 5,000,000 versions. The quick scale takes about 3 minutes.
+Scales. `full` runs the values of the templates (up to 100,000 members and 5,000,000 versions); the last full run passed 280 of 280 variants and 1,065 of 1,065 checks, and takes about 2 hours on 4 CPUs, mostly for the variants of T1.3 with 100,000 members and of T5.4 with 5,000,000 versions. `quick` caps numeric cover values at 2000, `smoke` at 50, and the sizes that the drivers hard-code (T2.2, T4.1) get smaller in the same way. The smoke scale gives the same 280 variants and 1,065 checks; it is the scale of CI and of the mutation gate. Results of the smaller scales are in `evals/results/latest-<scale>.json` (not in the repository, except `latest-full.json`).
+
+Isolation and stamp. By default the runner makes a database of its own (`mudcat_evals_<time>_<pid>` on the server of `--server` or `MUDCAT_SERVER`) and drops it at the end. With `--db` or `MUDCAT_DB` it uses that database and does not drop it. The results JSON has a `stamp`: the git commit, whether the working tree had changes, the scale and the date. `mudcat-bench` writes the same stamp.
 
 For each variant the runner makes a fresh tenant, builds the fixture from the parameters, lets a scripted actor reach the goal through the mudcat interfaces, and then compares the observed outcome with the oracle. A driver reports each check by a part of its text in tasks.yaml; a check that applies to the variant and that no driver evaluated counts as a failure. The actor is scripted, not an AI agent; the evals with an agent as actor are still to do.
 
+## The mutation gate
+
+`scripts/mutation-gate.sh` is the test of the checks. The cargo feature `mutants` makes `mudcat::mutant(name)` true when the environment variable `MUDCAT_MUTANT` has that name; without the feature it is a constant `false`, so a normal build has no switch. Ten defects, each a change of one line, are behind it:
+
+| Defect | Where | What it does |
+|---|---|---|
+| `no-invalidation` | resolver.rs, `resolve_inner` | invalidated versions stay in the plan |
+| `expired-grant-ok` | policy.rs, `evaluate` | a usage grant that has ended counts as live |
+| `no-compartment` | authz.rs, `check_as` | compartments are not an intersection |
+| `search-no-recheck` | search.rs, `search` | a hit of an annotation or artifact is taken with no check of invalidation, newest version or access |
+| `no-stream-filter` | stream.rs, `Filter::allows` | a subscription gets every event of the tenant |
+| `wide-prefix` | resolver.rs, `issue_credentials` | the prefix credential covers the whole bucket |
+| `merkle-constant` | datasets.rs, `merkle` | the Merkle hash is a constant |
+| `tag-ref-movable` | datasets.rs, `commit_one` | a commit can move a tag ref |
+| `no-branch-lock` | datasets.rs, `commit_one` | the branch ref is read with no `for update` |
+| `relay-xid-rule` | stream.rs, `relay_batch` | the relay uses the rule of the first version of architecture.md (publish rows of transactions older than every transaction in progress) |
+
+For the baseline and for each defect, the script runs the smoke evals and `cargo test`, and writes `evals/results/mutation-gate.txt`: the templates that failed, the tests that failed, and "detected" or "NOT DETECTED". `relay-xid-rule` depends on timing and runs three times; it counts as detected only if every run detects it. The script exits with an error if a defect is not detected or if the baseline is not green. It takes about 40 minutes in a debug build (its own target directory, `target/mutants`). In CI it is a workflow that is started by hand.
+
 ## What the evals do not detect
 
-A probe seeded ten defects, one at a time, into mechanisms that the design calls necessary, and ran the 280 variants and the scenario tests against each. The variants detected five. The scenario tests detected three more (a subscription that gets every event of the tenant, a prefix credential for the whole bucket, a commit that moves a tag ref). Two defects passed everything:
+The first probe seeded ten defects, one at a time, and ran the 280 variants and the scenario tests against each. The variants detected five, the scenario tests three more, and two passed everything (a Merkle hash that is a constant; events out of commit order). The probe is now the mutation gate, and checks were added for the two. At the last commit of this work the gate (`evals/results/mutation-gate.txt`) detects all ten. How each is detected:
 
-- **A Merkle hash that is a constant.** Checks compare the hash of a snapshot before and after an operation. No check computes the hash again from the members (ID-5).
-- **Events out of commit order.** The rule of the architecture document for the relay was put back. In three runs of the variants and one run of the scenario tests, no check detected it. One full-scale run detected it earlier, by chance, under load from other processes. The order of events needs a test with fixed interleavings of transactions, not a load test.
+| Defect | By the variants | By tests |
+|---|---|---|
+| `no-invalidation`, `expired-grant-ok`, `search-no-recheck`, `no-branch-lock` | yes | yes |
+| `no-compartment` | T4.2 and, since the check tries the access, T3.2 | yes |
+| `wide-prefix` | T1.1, INV-15 (a second ACL root with two files in the same bucket) | yes |
+| `merkle-constant` | INV-2 computes the hash again from the members | a unit test with vectors from `sha256sum` |
+| `relay-xid-rule` | by chance only (one T4.1 variant in 2 of 3 runs at the smoke scale) | `tests/stream_order.rs`, with a fixed interleaving of three transactions; it fails every time with the defect |
+| `no-stream-filter`, `tag-ref-movable` | no | only the scenario tests (uc4_05, uc2_06) |
 
-Other weak points that the probe showed: compartments are checked in one template only (T4.2); the check "the content is in the retention compartment" of T3.2 reads the list of compartments and does not try a read; no fixture puts two ACL roots in one bucket, so INV-15 cannot fail in a variant; and one check of T4.1 (events that come a second time) depends on timing.
+What stays weak:
 
-The drivers and the checks have the same author as the implementation. They also read and write the database directly in places, not only through the interfaces of mudcat. Both make a pass weaker evidence than its number suggests.
+- **Ten defects are few.** They were chosen by the author of the implementation, for mechanisms that the design calls necessary. A defect that nobody thought of is not tested. Most requirements have no defect of their own.
+- **Two defects are detected only by scenario tests.** No variant of the templates has a subscription that must not get the events of a different ACL root, and none tries to move a tag ref.
+- **Interleavings.** Only the order of events has a test with fixed interleavings. The branch requirement of commits (T1.2 detects `no-branch-lock` only by load, with 2 to 32 writers) and the fence of a tenant move have none.
+- **Same author.** The drivers and the checks have the same author as the implementation, and in places they read and write the database directly, not only through the interfaces of mudcat. A pass is weaker evidence than its number suggests.
+- **Unit tests.** `query.rs` is tested for the SQL text and parameters of the predicate only; its path-glob part is built inside `run`, which needs a transaction, and has scenario tests only.
+- **CI.** The workflows in `.github/workflows/` were written and parsed, not run on a hosted runner, in the session that made them.
 
 ## Not yet done
 
-- The seeded defects as a permanent gate: each requirement that a task verifies needs one defect that the task detects.
-- A test with fixed interleavings for the order of events, the branch requirement and the fence of a tenant move.
+- More seeded defects, so that each requirement that a task verifies has one that the task detects (the gate has ten).
+- Tests with fixed interleavings for the branch requirement of commits and for the fence of a tenant move; variants that detect `no-stream-filter` and `tag-ref-movable`.
 - Variants that act and observe only through the public interfaces, with a stable ID for each check.
-
 - Random sequences of actions with the invariants as the only checks.
 - Tasks with a measured result: time, number of calls, cost. All checks are now true or false.
 - Tasks for the reserve use cases.
