@@ -33,8 +33,21 @@ done
 
 dburl() { echo "${SERVER%/*}/$1"; }
 dropdb() {
-  command -v psql >/dev/null && psql "$(dburl postgres)" -qc "drop database if exists \"$1\" with (force)" >/dev/null 2>&1
+  command -v psql >/dev/null || return 0
+  local i
+  for i in 1 2 3; do
+    psql "$(dburl postgres)" -qc "drop database if exists \"$1\" with (force)" >>"$LOG/drop.log" 2>&1 && return 0
+    sleep 2
+  done
+  echo "could not drop the database $1 (see $LOG/drop.log)" >&2
   return 0
+}
+# The dedicated databases that the tests of tenant moves make, and leave when they fail. The
+# gate must be the only user of the tests on this server while it runs.
+drop_left_databases() {
+  command -v psql >/dev/null || return 0
+  local d
+  for d in $(psql "$(dburl postgres)" -Atc "select datname from pg_database where datname ~ '^mudcat_(ded_mv|uc505f?)_'" 2>>"$LOG/drop.log"); do dropdb "$d"; done
 }
 
 echo "building with the feature mutants (target dir $CARGO_TARGET_DIR) ..."
@@ -52,6 +65,7 @@ run_one() {
   echo "== $name (run $run): cargo test" >&2
   MUDCAT_MUTANT=$mut MUDCAT_TEST_DB="$(dburl "$db")" cargo test --features mutants --no-fail-fast >"$LOG/$tag.tests.log" 2>&1
   dropdb "$db"
+  drop_left_databases
 }
 
 # the failed templates and tests of one run, as text

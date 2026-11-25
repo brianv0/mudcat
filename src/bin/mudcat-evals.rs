@@ -117,15 +117,8 @@ async fn main() -> anyhow::Result<()> {
     std::fs::write(&name, serde_json::to_string_pretty(&serde_json::json!({"stamp": evals::stamp(&a.scale), "database": db_url, "scale": a.scale, "passed": passed, "variants": results.len(), "checks": checks, "checks_passed": checks_ok, "results": results}))?)?;
     if let Some(db) = own_db {
         drop(inst);
-        match mudcat::instance::make_pool(&a.server, 1) {
-            Ok(p) => {
-                if let Ok(c) = p.get().await {
-                    if let Err(e) = c.batch_execute(&format!("drop database if exists \"{db}\" with (force)")).await {
-                        eprintln!("could not drop {db}: {e}");
-                    }
-                }
-            }
-            Err(e) => eprintln!("could not drop {db}: {e}"),
+        if let Err(e) = evals::drop_database(&a.server, &db).await {
+            eprintln!("could not drop {db}: {e}");
         }
     }
     if passed != results.len() {

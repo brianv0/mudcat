@@ -306,10 +306,8 @@ pub async fn run_variant(base: &Arc<Instance>, tpl: &Template, v: &Variant, scal
     result.seconds = started.elapsed().as_secs_f64();
     let _ = std::fs::remove_dir_all(&dir);
     for db in &ctx.record.cleanup_databases {
-        if let Ok(p) = crate::instance::make_pool(&crate::instance::db_url(&inst.base_url, "postgres"), 1) {
-            if let Ok(c) = p.get().await {
-                let _ = c.batch_execute(&format!("drop database if exists \"{db}\" with (force)")).await;
-            }
+        if let Err(e) = drop_database(&inst.base_url, db).await {
+            eprintln!("could not drop {db}: {e}");
         }
         // the registry must not name a tenant in a database that is gone
         if let Ok(c) = inst.shared.get().await {
@@ -332,6 +330,25 @@ pub fn stamp(scale: &str) -> Value {
         "scale": scale,
         "date": chrono::Utc::now().to_rfc3339(),
     })
+}
+
+/// Drop a database that a run made, on the server of `server`. A drop with force fails while an
+/// autovacuum worker is in the database, because the role of mudcat cannot end that process (it
+/// is not a superuser), so the drop is tried a few times.
+pub async fn drop_database(server: &str, name: &str) -> std::result::Result<(), String> {
+    let pool = crate::instance::make_pool(&crate::instance::db_url(server, "postgres"), 1).map_err(|e| e.to_string())?;
+    let mut last = String::new();
+    for _ in 0..10 {
+        match pool.get().await {
+            Ok(c) => match c.batch_execute(&format!("drop database if exists \"{name}\" with (force)")).await {
+                Ok(()) => return Ok(()),
+                Err(e) => last = e.as_db_error().map(|d| d.message().to_string()).unwrap_or_else(|| e.to_string()),
+            },
+            Err(e) => last = e.to_string(),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    Err(last)
 }
 
 /// The URL of database `name` on the server of `server`.
