@@ -5,7 +5,7 @@ Status: definitions only. There is no mudcat implementation yet, and no runner. 
 | Layer | File | Content |
 |---|---|---|
 | Invariants | [invariants.yaml](invariants.yaml) | 23 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 38 tasks with variation. `generate.py` expands them into 627 variants |
+| Task templates | [tasks.yaml](tasks.yaml) | 39 tasks with variation. `generate.py` expands them into 641 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
 | Benchmarks | [benchmarks/](benchmarks/) | Measured evals. The first one is for search: 13 query classes, 17 measures and 21 targets |
 | Conformance suites | [conformance/](conformance/) | Suites from other projects that mudcat must pass. The first one is the Iceberg REST Compatibility Kit |
@@ -62,9 +62,10 @@ These rules make a task effective:
 | Task | Goal of the actor | Decision axes | Cover axes | Variants |
 |---|---|---|---|---|
 | T1.1 resolve-and-read | Get the data of a dataset for a training job | structure, storage mode, invalidated members | number of members | 30 |
-| T1.2 concurrent-commits | Many writers change one branch, and no change is lost | kind of change, overlap of members | number of writers | 7 |
+| T1.2 concurrent-commits | Many writers change one branch, and no change is lost | kind of change, overlap of members, kind of requirement | number of writers, structure | 13 |
 | T1.3 stage-near-compute | Have a verified copy near the cluster, then resolve there | fault in the transfer, place option | kind of target, number of members | 12 |
 | T1.5 find-clips | Find clips by a text or by an example, inside a filter | kind of query, selectivity of the filter, state of the data | | 18 |
+| T1.6 commit-again-after-a-lost-answer | Send a commit again and get the change one time | state of the first attempt, idempotency key, kind of change | | 8 |
 | T2.1 combine-methods | Publish one dataset from two | methods, declared equivalence, step | | 8 |
 | T2.2 leakage-check | Find out if test data is related to training inputs | criterion, number of related elements | | 12 |
 | T2.3 reproduce-later | Get the training inputs again after one year | change since the first resolution | | 7 |
@@ -100,7 +101,7 @@ These rules make a task effective:
 | T8.4 import-and-train | Train on a public dataset together with own data | licence, purpose, reach of the files | format of the description | 17 |
 | T8.5 the-original-changes | Know when a public dataset changed or went away | state of the original, use in the tenant | | 10 |
 
-Variants for each use case: 67, 51, 120, 59, 71, 101, 79 and 79.
+Variants for each use case: 81, 51, 120, 59, 71, 101, 79 and 79.
 
 `generate.py` has these options:
 
@@ -192,7 +193,8 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
 
 - Each scenario lists its `gaps`: the design or the requirements that it needs and that the documents do not yet contain. `check.py` prints all gaps.
 - Each oracle is a decision that the design must make. Some oracles contain decisions that the documents do not yet state:
-  - An add-only commit succeeds with no retry.
+  - A commit conflicts only when one of its own requirements is false. Thus appends, and changes to different members, succeed with no retry.
+  - A commit that changes nothing makes no snapshot.
   - A legal hold blocks purge and erasure, but not invalidation.
   - A resolution with a strict place option fails when the copy near the cluster is not complete.
   - A summary of training content states which runs have no resolution.
@@ -200,7 +202,7 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A request for own data and public data together is refused completely when the terms of the public data do not permit it.
   - A person with no access to a discovered dataset does not find it in a search. Goods showed the metadata of each dataset to each engineer.
   - When the content of a public dataset changes with no new version, mudcat keeps the old checksums and makes new versions.
-- The tasks and the invariants cover 115 of the 172 requirements. Requirements for performance and for federation have no task yet.
+- The tasks and the invariants cover 121 of the 181 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 

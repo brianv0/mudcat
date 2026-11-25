@@ -91,7 +91,7 @@ The catalog API is a stateless service with these interfaces:
 - **REST interface:** it has an OpenAPI description and uses JSON by default. Content negotiation gives JSON-LD with the published context. Paging uses cursors with a stable default order, and counts are estimates. To count results, Datacat's REST layer iterated over the full result set. pgstac documents the same failure mode.
 - **Bulk interface** for registration, manifest submission and resolution: Apache Arrow over HTTP or Arrow Flight. It handles millions of rows per call.
 - **Change stream** of catalog changes (see Change stream, below).
-- **Commits with requirements.** A request that changes a dataset has the shape of an Iceberg REST commit. It has a list of **requirements** and a list of **updates**. Iceberg calls a requirement such as `assert-ref-snapshot-id` an assertion about the current table state. In mudcat, a requirement such as "branch `main` points to snapshot S" goes with an update such as "add these members". mudcat applies all the updates in one transaction, but only if all the requirements are true. If not, it returns a conflict, and the client tries again. One request can change several datasets, in one transaction. This is optimistic concurrency.
+- **Commits with requirements.** A request that changes a dataset has the shape of an Iceberg REST commit. It has a list of **requirements** and a list of **updates**. Iceberg calls a requirement such as `assert-ref-snapshot-id` an assertion about the current table state. In mudcat, a requirement such as "branch `main` points to snapshot S" goes with an update such as "add these members". mudcat applies all the updates in one transaction, but only if all the requirements are true for the newest state (see Commits on the newest state, below). If not, it returns a conflict, and the client tries again. One request can change several datasets, in one transaction. This is optimistic concurrency.
 
 ### Commit cost
 
@@ -102,8 +102,50 @@ mudcat keeps object-storage writes out of the commit path:
 - **A commit is a database transaction.** It changes rows in the catalog database only. It writes no files.
 - **Recent changes stay as rows.** The members that recent commits added or removed stay as rows in the catalog database. A background compactor later writes them into manifest files. A snapshot is thus a list of sealed manifests plus the rows that the compactor did not seal yet.
 - **The Merkle hash is computed at publication,** not at each commit. A published snapshot always has its hash (ID-5).
-- **Appends do not conflict.** Some updates only add members, and their requirement only names the branch. mudcat applies such an update to the newest snapshot of the branch, and the client does not retry. Iceberg treats appends in a similar way when a client retries. Updates that remove or replace members keep their strict requirements.
+- **Only a false requirement is a conflict.** mudcat applies each commit to the newest snapshot of the branch. An append has no requirement on other members, so appends never conflict. A commit that removes or replaces members conflicts only when another writer changed the same members (see the next section).
 - **Batched snapshots.** The ingest writer groups the registrations for one dataset into one commit for each batch interval. Thus a high rate of registration does not make one snapshot for each file.
+
+### Commits on the newest state
+
+**The rule.** mudcat tests the requirements of a commit against the newest state of the dataset at the time of the commit, and applies the updates to that state. The state that the client read is not a part of the test. Thus a commit fails only when one of its own requirements is false. A change by another writer that no requirement refers to is not a conflict.
+
+Iceberg calls this a server-side retry. In the reference server of Iceberg it is a loop: when the pointer moved, the server loads the table again, tests the requirements again and applies the updates again. mudcat needs no loop. A commit locks the row of the branch ref, reads the newest snapshot, tests the requirements, applies the updates and ends. The rule is the same for each kind of dataset, because a commit changes members and annotation sets, and not files.
+
+**Requirements, from narrow to wide.**
+
+| Requirement | True when | Used for |
+|---|---|---|
+| None | Always | An append |
+| `assert-create` | The dataset, the ref or the path does not exist | A new dataset, a new ref, a new artifact at a path |
+| `assert-member` | A given member has a given version, or is absent | The replacement or the removal of that member |
+| `assert-annotation-set` | A given annotation set has a given version | An enricher that replaces its own output |
+| `assert-structure` | The structure and the last field ID of the dataset are the given ones | A change of the structure |
+| `assert-unchanged-in` | No commit after a given snapshot added or removed a member that a given predicate matches | The replacement of one day of data; the removal of duplicates in one partition |
+| `assert-ref-snapshot` | The branch ref points to a given snapshot | A change that depends on all members |
+
+**The client library sets the requirements.** A person selects an operation, and the library adds the requirements that the operation needs:
+
+| Operation | Requirements |
+|---|---|
+| Append members | None |
+| Replace or remove named members | `assert-member` for each member |
+| Replace the members that a predicate matches | `assert-unchanged-in` for that predicate |
+| Add or replace an annotation set | `assert-annotation-set` |
+| Change the structure | `assert-structure` |
+| Replace all members | `assert-ref-snapshot` |
+
+**The answer to a commit** gives the snapshot that the commit made and the snapshot that mudcat applied the updates to. The second one can be newer than the snapshot that the client read. A conflict names the requirement that is false, the member or the ref that it refers to, and the commit that changed it.
+
+**The same rule applies outside datasets.** A new version of an artifact is a commit with a requirement on `latest`, or with none. A change to collections has `assert-create` for each new path. A write to a metadata payload has a requirement on the revision of that payload. Tables that their own engine maintains, such as Lance and Delta tables, do not get their commits through mudcat. Iceberg tables get them through the gateway, with the requirements of the Iceberg specification.
+
+**Limits.**
+
+- **The requirements are the read set that the client declares.** A client that used more of the dataset than its requirements say can commit on a state that it did not expect. `assert-ref-snapshot` gives full isolation. Each narrower requirement gives more concurrency and less isolation.
+- **A wide requirement can fail again and again.** A writer with `assert-ref-snapshot` on a branch with many appends gets a conflict at each attempt. Such a writer must use a narrower requirement, or work on its own branch ref and move the main branch ref in one commit at the end.
+- **The number of requirements has a limit.** A commit with more than TBD `assert-member` requirements must use `assert-unchanged-in`.
+- **`assert-unchanged-in` needs history.** mudcat tests it with the change summaries and the manifest summaries of the commits after the given snapshot. If that snapshot expired, the requirement is false.
+
+**A repeated commit is safe.** A commit can carry an idempotency key. For a second commit with the same key, mudcat returns the result of the first commit and makes no snapshot. The Iceberg REST specification has the same function for requests that change state. A commit whose updates change nothing makes no snapshot, and returns the present one.
 
 ### Query compiler
 

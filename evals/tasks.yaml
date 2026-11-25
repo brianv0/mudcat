@@ -67,38 +67,53 @@
 - id: T1.2
   use_case: 1
   name: concurrent-commits
-  goal: Several writers change the same branch of a dataset at the same time. No change is lost.
+  goal: Several writers change the same branch of a dataset at the same time. No change is lost, and no writer waits without cause.
   axes:
     change: [add-only, remove, replace]
     members: [disjoint, overlapping]
+    requirement: [narrow, the-complete-branch]
   cover:
     writers: [2, 8, 32]
+    structure: [records, container, array]
   fixture: >
-    A dataset whose branch ref main points to a snapshot with 1,000 members. {writers} writers start
-    at the same time. Each makes one commit of the kind {change}. The members that they change are {members}.
+    A dataset of the structure {structure} whose branch ref main points to a snapshot with 1,000 members.
+    {writers} writers read that snapshot and start at the same time. Each makes one commit of the kind
+    {change}. The members that they change are {members}. Kind of requirement in each commit: {requirement}.
+    A narrow requirement names only the members that the commit removes or replaces.
   oracle:
+    - if: {requirement: the-complete-branch}
+      then: {outcome: one-succeeds-others-retry}
     - if: {change: add-only}
       then: {outcome: all-succeed-first-time}
-    - else: {outcome: conflicts-then-retries}
+    - if: {members: disjoint}
+      then: {outcome: all-succeed-first-time}
+    - else: {outcome: conflict-for-the-shared-members}
   checks:
     - check: The change stream has one snapshot-committed event for each successful commit, in commit order.
     - check: The sum of the change summaries is the difference between the first snapshot and the last.
     - outcome: all-succeed-first-time
       check: Each of the {writers} commits succeeds with no retry by the client.
     - outcome: all-succeed-first-time
+      check: The answer to each commit gives the snapshot that mudcat applied it to. For all writers but one, this is not the snapshot that the writer read.
+    - outcome: all-succeed-first-time
+      when: {change: add-only}
       check: The last snapshot contains the union of all added members.
     - outcome: all-succeed-first-time
-      when: {members: overlapping}
+      when: {change: add-only, members: overlapping}
       check: A member that two writers added is in the last snapshot one time.
-    - outcome: conflicts-then-retries
-      check: Each writer whose requirement names an old snapshot gets a conflict, and no partial change.
-    - outcome: conflicts-then-retries
+    - outcome: all-succeed-first-time
+      when: {change: [remove, replace]}
+      check: The last snapshot shows the change of each writer.
+    - outcome: conflict-for-the-shared-members
+      check: For each member that two writers changed, one commit succeeds. Each other commit that names the member fails completely, with no partial change.
+    - outcome: conflict-for-the-shared-members
+      check: Each conflict names the member, its present version and the commit that changed it.
+    - outcome: one-succeeds-others-retry
+      check: In the first round one commit succeeds. Each other commit gets a conflict that names the branch ref.
+    - outcome: one-succeeds-others-retry
       check: After the retries, the members are the result of the commits applied one after the other, in commit order.
-    - outcome: conflicts-then-retries
-      when: {members: overlapping}
-      check: A writer that removes or replaces a member that is already gone gets an error that names the member.
   invariants: [INV-2, INV-5]
-  verifies: [ID-7, EV-1, EV-3, EV-13, PF-5]
+  verifies: [ID-7, ID-14, ID-15, ID-18, ID-19, EV-1, EV-3, EV-13, PF-5]
   reference: UC1-02
 
 - id: T1.3
@@ -175,6 +190,39 @@
   invariants: [INV-3]
   verifies: [EV-10, EV-11, UP-9, PF-17, ST-14]
   reference: UC1-04
+
+- id: T1.6
+  use_case: 1
+  name: commit-again-after-a-lost-answer
+  goal: A writer lost the answer to a commit and sends the commit again. The dataset has the change one time.
+  axes:
+    first_attempt: [committed-and-the-answer-was-lost, not-committed]
+    key: [the-same-idempotency-key, no-key]
+    change: [add-only, remove]
+  fixture: >
+    A writer sends one commit of the kind {change}. State of this first attempt: {first_attempt}. The
+    writer sends the commit again, with {key}. A remove has a requirement on each member that it removes.
+  oracle:
+    - if: {first_attempt: not-committed}
+      then: {outcome: committed-one-time}
+    - if: {key: the-same-idempotency-key}
+      then: {outcome: first-result-returned}
+    - if: {change: add-only}
+      then: {outcome: no-new-snapshot}
+    - else: {outcome: conflict-names-the-first-commit}
+  checks:
+    - check: The dataset has the change one time, in one snapshot, and the change stream has one event for it.
+    - outcome: committed-one-time
+      check: The second attempt makes the snapshot.
+    - outcome: first-result-returned
+      check: The answer has the snapshot of the first attempt, and mudcat makes no snapshot.
+    - outcome: no-new-snapshot
+      check: The second commit changes nothing. mudcat makes no snapshot and returns the present one.
+    - outcome: conflict-names-the-first-commit
+      check: The conflict names a member that is absent, and the commit that removed it. That commit is the first attempt of the writer.
+  invariants: [INV-2, INV-5]
+  verifies: [ID-16, ID-17, ID-19, EV-1]
+  reference: UC1-02
 
 # ---------------------------------------------------------------- use case 2
 

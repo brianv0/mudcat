@@ -47,13 +47,19 @@ Identifier prefixes:
 | ID-4 | mudcat shall record a content checksum for each version, with the checksum algorithm. | Storage resources compute different algorithms; integrity checks need the algorithm with the value. | T |
 | ID-5 | mudcat shall compute a Merkle hash for each published snapshot from the hashes of its members. | A party that holds the hashes can verify a snapshot without trust in the database of another tenant. | T |
 | ID-6 | When a tenant registers a replica of a version that another tenant produced, mudcat shall use the ID that the producing tenant minted. | Tenants under shared custody must agree on identity without coordination at write time. | T |
-| ID-7 | mudcat shall move a branch only if the branch points to the snapshot that the request states. | Concurrent writers must not lose each other's changes; Iceberg commits use the same optimistic concurrency. | T |
+| ID-7 | mudcat shall apply a commit only if each requirement of the commit is true for the newest state of the dataset at the time of the commit. | Concurrent writers must not lose each other's changes; Iceberg commits use requirements in the same way. | T |
 | ID-8 | mudcat shall keep each published snapshot until a person withdraws it. | Citations refer to published snapshots. | T |
 | ID-9 | mudcat shall expire a snapshot that is not published only if no ref and no resolution refers to it. | Snapshots that no process uses must not use storage for ever, but expiry must not break a reference. | T |
 | ID-10 | mudcat shall make, on request, a snapshot of the versions that a collection subtree held at a given time. | Users who work by folder need citable, verifiable states of a folder; the Butler proposes the same operation. | T |
 | ID-11 | mudcat shall give each tenant an ID that a cryptographic random generator made, with at least 122 random bits. | Tenant IDs must be unique in all installations without a central registry, and must not be guessable. | I |
 | ID-12 | mudcat shall put the tenant ID first in the key of each record that a tenant owns. | Records keep their keys when a tenant moves, and the data of a tenant is together in each index; the Salesforce Database has the same design. | I |
 | ID-13 | mudcat shall make a copy of a dataset without a copy of its manifests or its data. | Cheap copies are a design goal: clones, branches, sandboxes and selections share immutable data by reference. | T |
+| ID-14 | mudcat shall not refuse a commit because the dataset changed after the client read it, if each requirement of the commit is true. | Two writers that change different members must both succeed with no retry, for each kind of dataset; Iceberg calls this a server-side retry. | T |
+| ID-15 | mudcat shall accept requirements on a ref, on one member, on the members that a predicate matches, on the structure and on an annotation set. | A requirement that is narrower than the complete branch lets more commits succeed at the same time. | T |
+| ID-16 | mudcat shall return the result of the first commit, and make no snapshot, for a later commit with the same idempotency key. | A client that lost the answer to a commit must be able to send the commit again; the Iceberg REST specification has the same function. | T |
+| ID-17 | mudcat shall make no snapshot for a commit whose updates change nothing. | Repeated appends of the same members must not fill the history of a dataset with empty snapshots. | T |
+| ID-18 | mudcat shall return, for each commit, the snapshot that the commit made and the snapshot that mudcat applied the updates to. | A client must know when its change was applied to a newer state than the state that it read. | T |
+| ID-19 | mudcat shall name, in each conflict, the requirement that is false and the commit that made it false. | A writer must know what to read again, and if its own earlier commit is the cause. | T |
 
 ## Structure and metadata
 
