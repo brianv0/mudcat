@@ -1,0 +1,293 @@
+# Use case 3: rights and removal for training content
+
+- id: UC3-01
+  title: A training job asks for content that one source does not permit
+  variant: policy
+  given:
+    - A dataset "corpus" whose members come from three sources.
+    - Source "news-licence" grants train for the purposes research and commercial.
+    - Source "crawl-2025" grants train for the purpose research only.
+    - Source "user-content" grants evaluate only.
+  steps:
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: corpus, role: training}], action: train, purpose: commercial}
+      expect:
+        - mudcat refuses the resolution.
+        - The error names "crawl-2025" and "user-content", and the number of elements from each.
+        - mudcat issues no credentials and no plan.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: corpus, selection: "source = news-licence", role: training}], action: train, purpose: commercial}
+      expect:
+        - The resolution succeeds, and contains only elements of "news-licence".
+        - The policy decision lists the policies that mudcat evaluated, the version of the evaluator, and the result.
+    - actor: evaluator
+      do: resolve
+      with: {inputs: [{dataset: corpus, selection: "source = user-content", role: test}], action: evaluate, purpose: research}
+      expect:
+        - The resolution succeeds.
+    - actor: auditor
+      do: query
+      with: {question: why was each element in the training resolution permitted}
+      expect:
+        - The answer gives, for each source, the grant and the clause of the terms that the grant came from.
+  verifies: [UP-1, UP-2, UP-3, UP-5, UP-15, AC-8]
+  gaps: []
+
+- id: UC3-02
+  title: A licence ends
+  variant: time
+  given:
+    - Source "stock-video" grants train for the purpose commercial until the date T.
+    - Model M1, trained before T on data of "stock-video".
+    - The effective-policy cache was computed before T and was not computed again.
+  steps:
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: clips, role: training}], action: train, purpose: commercial, at: before T}
+      expect:
+        - The resolution succeeds.
+    - actor: time
+      do: time_passes
+      with: {until: after T}
+      expect: []
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: clips, role: training}], action: train, purpose: commercial}
+      expect:
+        - mudcat refuses the resolution and names the end of the grant of "stock-video".
+        - This is true although the effective-policy cache was not computed again.
+    - actor: counsel
+      do: report
+      with: {kind: uses of data whose licence ends before a date, date: T plus 30 days}
+      expect:
+        - The report lists the runs that used "stock-video", M1, and the caches and representations that contain its data.
+    - actor: counsel
+      do: query
+      with: {question: state of M1}
+      expect:
+        - M1 has a flag that an input licence ended, with the number of affected elements.
+        - mudcat did not change, hide or delete M1.
+  verifies: [UP-2, UP-4, QY-1, QY-6, PF-8]
+  gaps:
+    - No requirement states that the end of a grant takes effect at the time of the query, without a new computation of a cache.
+    - No requirement covers the flag on a model, and the record of the decision that a person makes about it.
+
+- id: UC3-03
+  title: A takedown of one work that appears in many places
+  variant: removal
+  given:
+    - An image with the fingerprint F. It is a member of three datasets.
+    - Two derived representations (training shards) and one annotation set (embeddings) contain it.
+    - The image and the shards have replicas on two storage resources.
+    - Resolution R9 of an old training run contains the image.
+  steps:
+    - actor: counsel
+      do: invalidate
+      with: {fingerprint: F, reason: "takedown request 4711", requested_by: rights holder}
+      expect:
+        - An invalidation record exists with the reason and the party.
+        - mudcat created no new snapshot of the three datasets.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: one of the three datasets, role: training}], action: train, purpose: research}
+      expect:
+        - The resolved input does not contain the image.
+    - actor: counsel
+      do: query
+      with: {question: every occurrence of fingerprint F}
+      expect:
+        - The answer lists the three datasets, the two representations, the annotation set, and each replica on the two storage resources.
+    - actor: counsel
+      do: purge
+      with: {invalidation: the record above}
+      expect:
+        - Site agents delete each replica of the image. There is one deletion receipt for each replica.
+        - For the shards that contain the image, mudcat makes a task to write them again without it.
+        - On storage that keeps old object versions, the old versions are deleted also.
+    - actor: auditor
+      do: query
+      with: {question: Merkle hash of the published snapshots that contained the image}
+      expect:
+        - Each snapshot has the same Merkle hash as before the purge.
+    - actor: auditor
+      do: resolve
+      with: {again: R9}
+      expect:
+        - mudcat reports the image as an element that policy now excludes.
+    - actor: subscriber
+      do: poll
+      with: {from: position before the invalidation}
+      expect:
+        - The stream has a removal event for the image.
+  verifies: [UP-7, UP-9, UP-10, QY-5, QY-8, EV-7]
+  gaps:
+    - No requirement covers the new write of derived shards after a purge.
+
+- id: UC3-04
+  title: A legal hold and a takedown on the same content
+  variant: removal
+  given:
+    - A dataset "books-1" under a legal hold with the reason "litigation 22-cv-1".
+    - A takedown request for one book in "books-1".
+  steps:
+    - actor: counsel
+      do: invalidate
+      with: {target: the book, reason: takedown}
+      expect:
+        - The book does not resolve for any action.
+    - actor: counsel
+      do: purge
+      with: {invalidation: the record above}
+      expect:
+        - mudcat does not delete the bytes. The answer names the legal hold and its reason.
+        - The book is in the retention compartment. Only the members of that compartment can read it.
+    - actor: counsel
+      do: erase
+      with: {target: the book}
+      expect:
+        - mudcat refuses the erasure and names the legal hold.
+    - actor: counsel
+      do: release_hold
+      with: {hold: "litigation 22-cv-1", reason: "case closed"}
+      expect:
+        - The release records who released the hold, when, and the reason.
+    - actor: counsel
+      do: purge
+      with: {invalidation: the record above}
+      expect:
+        - The purge completes, with one deletion receipt for each replica.
+    - actor: auditor
+      do: query
+      with: {question: history of the book}
+      expect:
+        - The history shows the invalidation, the blocked purge, the release and the purge, in the order of their commits.
+  verifies: [UP-7, UP-8, UP-9, UP-13, EV-14, AC-8]
+  gaps:
+    - No requirement covers the retention compartment.
+
+- id: UC3-05
+  title: Terms that the compiler can translate only in part
+  variant: policy
+  given:
+    - Source "partner-A" with an ODRL document. One clause permits training. One clause has a condition that the terms compiler cannot translate.
+    - Source "open-set" with the SPDX licence identifier CC-BY-4.0.
+  steps:
+    - actor: data-steward
+      do: set_terms
+      with: {source: open-set, licence: CC-BY-4.0}
+      expect:
+        - The source has grants and an attribution duty from the stored mapping of that licence.
+    - actor: data-steward
+      do: set_terms
+      with: {source: partner-A, document: the ODRL document}
+      expect:
+        - mudcat keeps the original document.
+        - The source has the status partly compiled. The clause that mudcat did not translate is in the review queue.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: partner-data, role: training}], action: train, purpose: commercial}
+      expect:
+        - mudcat blocks the resolution and names the clause that needs review.
+    - actor: counsel
+      do: review
+      with: {target: the clause, decision: "permit train for commercial until 2027-12-31"}
+      expect:
+        - The grant exists with the end date, the reviewer, and a link to the clause.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: partner-data, role: training}], action: train, purpose: commercial}
+      expect:
+        - The resolution succeeds.
+    - actor: trainer
+      do: publish_model
+      with: {artifact: /models/m2}
+      expect:
+        - The model carries the attribution duty of "open-set" if its inputs included that source.
+  verifies: [UP-4, UP-5, UP-6]
+  gaps: []
+
+- id: UC3-06
+  title: The summary of training content for a regulator
+  variant: happy-path
+  given:
+    - Model M3. Its training resolution used four kinds of source.
+    - 40 crawl sources with their domains, crawler names and fetch periods.
+    - 3 licensed sources.
+    - 1 source of user data.
+    - 2 sources that a model generated.
+  steps:
+    - actor: counsel
+      do: report
+      with: {kind: training-content summary, model: M3}
+      expect:
+        - The report has one section for each kind of source.
+        - For crawled content, it lists the domains by size, the crawler names and the fetch periods.
+        - The numbers in the report agree with the numbers in the resolution of M3.
+        - mudcat made the report from the catalog, with no read of training data.
+    - actor: counsel
+      do: report
+      with: {kind: models that used a source, source: one licensed source}
+      expect:
+        - The report lists M3 with the number of elements from that source.
+    - actor: engineer
+      do: publish_model
+      with: {artifact: /models/m3-finetuned, derived_from: M3}
+      expect:
+        - The summary for the new model includes the sources of M3 and the sources of the fine-tuning data.
+  verifies: [QY-1, QY-2, UP-1, UP-4, PR-2]
+  gaps:
+    - No requirement states that the summary of a derived model includes the sources of its base model.
+
+- id: UC3-07
+  title: Remove a person, and a model that is a controlled derivative
+  variant: removal
+  given:
+    - Recordings of the speaker "sp-12" in a speech dataset. Their source has the tag "consent = given".
+    - Model V1, trained on the dataset.
+    - Dataset "genomes" from a controlled-access source with the duties "share only with approved users" and "do not keep after the project ends".
+    - Model G1, trained on "genomes".
+    - A metadata payload on one recording that contains the name of the speaker.
+  steps:
+    - actor: privacy-officer
+      do: tag
+      with: {target: source of sp-12, tag: consent, value: withdrawn}
+      expect:
+        - The tag propagates to the entities derived from the source.
+    - actor: privacy-officer
+      do: invalidate
+      with: {target: source of sp-12, reason: consent withdrawn}
+      expect:
+        - No recording of sp-12 resolves for any action.
+    - actor: privacy-officer
+      do: report
+      with: {kind: models that used a source, source: source of sp-12}
+      expect:
+        - The report lists V1 with the number of affected elements.
+        - V1 has a flag. mudcat did not change V1.
+    - actor: lead
+      do: review
+      with: {target: the flag on V1, decision: "retrain without sp-12 before the next release"}
+      expect:
+        - mudcat records the decision, the person and the time.
+    - actor: privacy-officer
+      do: erase
+      with: {target: the metadata payload with the name}
+      expect:
+        - Only an erasure record stays, with the ID, the date and the reason. It does not contain the name.
+        - The state stream has a removal event for the payload.
+    - actor: engineer
+      do: export
+      with: {target: G1, to: a user who is not an approved user}
+      expect:
+        - mudcat refuses the export and names the duty that G1 has from "genomes".
+    - actor: engineer
+      do: grant
+      with: {target: G1, to: an approved user, permission: read}
+      expect:
+        - The grant succeeds.
+  verifies: [UP-4, UP-7, UP-9, UP-11, ST-17, QY-1, EV-7]
+  gaps:
+    - No requirement covers the propagation of a tag along lineage.
+    - No requirement states that a duty of a model limits its export and its grants.

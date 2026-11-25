@@ -1,0 +1,252 @@
+# Use case 2: training data for scientific models, from several sources and sites
+
+- id: UC2-01
+  title: Combine two computed datasets, train, and reproduce a year later
+  variant: happy-path
+  given:
+    - A self-hosted instance with one tenant.
+    - Dataset A and dataset B, each a published snapshot. Each has a source with a method record.
+    - The method records of A and B are the same.
+  steps:
+    - actor: researcher
+      do: commit
+      with: {dataset: /potentials/train-v1, branch: main, add: [snapshot of A, snapshot of B]}
+      expect:
+        - The snapshot of train-v1 has two members, each a snapshot with its Merkle hash.
+    - actor: researcher
+      do: publish
+      with: {dataset: /potentials/train-v1, tag_ref: v1}
+      expect:
+        - The snapshot is published, has a Merkle hash, and the tag ref v1 points to it.
+    - actor: researcher
+      do: resolve
+      with: {inputs: [{dataset: /potentials/train-v1, ref: v1, role: training}], action: train, purpose: research}
+      expect:
+        - A resolution exists that names the exact snapshot.
+    - actor: researcher
+      do: record_run
+      with: {code: "git:abc123", image: "sha256:...", parameters: {seed: 7}}
+      expect:
+        - The run is an activity. The full run record is a catalogued version.
+    - actor: researcher
+      do: publish_model
+      with: {artifact: /models/potential-1}
+      expect:
+        - The model version has lineage to the run, to the resolution, and to A and B.
+    - actor: time
+      do: time_passes
+      with: {duration: 1 year}
+      expect: []
+    - actor: reviewer
+      do: lineage
+      with: {of: /models/potential-1, direction: ancestors}
+      expect:
+        - The answer gives the code version, the image, the parameters, and the snapshots of A and B with their hashes.
+    - actor: reviewer
+      do: resolve
+      with: {again: the resolution of the model}
+      expect:
+        - The same members resolve. mudcat reports no excluded elements.
+  verifies: [ID-5, ID-8, UP-3, PR-1, PR-2, PR-5, QY-8, OP-1, OP-13]
+  gaps:
+    - The model does not yet say that a snapshot can be a member of another dataset.
+
+- id: UC2-02
+  title: Two datasets with different methods
+  variant: policy
+  given:
+    - 'Dataset A with the method record {functional: PBE, hubbard_u: no}.'
+    - 'Dataset C with the method record {functional: PBE, hubbard_u: yes}.'
+    - No declared equivalence between the two methods.
+  steps:
+    - actor: researcher
+      do: commit
+      with: {dataset: /potentials/train-v2, branch: main, add: [snapshot of A, snapshot of C]}
+      expect:
+        - The commit succeeds, and the snapshot has a warning that its members have two methods with no declared equivalence.
+    - actor: researcher
+      do: publish
+      with: {dataset: /potentials/train-v2, tag_ref: v2}
+      expect:
+        - mudcat refuses the publication. The error names the two methods and the attribute that differs.
+    - actor: lead
+      do: declare_equivalence
+      with: {methods: [method of A, method of C], after: "energy alignment, script git:def456", reason: text}
+      expect:
+        - The equivalence records who declared it, when, and the reason.
+    - actor: researcher
+      do: publish
+      with: {dataset: /potentials/train-v2, tag_ref: v2}
+      expect:
+        - The publication succeeds. The snapshot refers to the declared equivalence.
+    - actor: reviewer
+      do: query
+      with: {question: which published datasets depend on a declared equivalence}
+      expect:
+        - The answer contains train-v2 and the equivalence.
+  verifies: [UP-1, ST-6, ID-3]
+  gaps:
+    - No requirement covers method records, or the rule that a combination of different methods needs a declared equivalence.
+    - The documents do not say at which point mudcat enforces the rule. This eval puts it at publication.
+
+- id: UC2-03
+  title: The training set must exclude everything that is similar to the benchmark
+  variant: policy
+  given:
+    - A published evaluation dataset "bench" with 5,000 structures, and a tag that says it must not be in training.
+    - A similarity criterion "prototype" at version 1, with a threshold.
+    - A candidate dataset with 1,000,000 structures. 1,200 of them are similar to "bench" under "prototype".
+  steps:
+    - actor: researcher
+      do: select
+      with: {dataset: candidates, predicate: "not similar(bench, prototype)", name: train-clean}
+      expect:
+        - The selection has 998,800 elements.
+    - actor: researcher
+      do: check_leakage
+      with: {train: train-clean, test: bench, criterion: prototype}
+      expect:
+        - A leakage assertion exists with the result satisfied, the criterion version, and the evidence.
+    - actor: researcher
+      do: commit
+      with: {dataset: candidates, branch: main, add: "50 new structures, of which 2 are similar to bench"}
+      expect:
+        - The commit succeeds.
+    - actor: researcher
+      do: resolve
+      with: {inputs: [{dataset: candidates, ref: main, selection: train-clean, role: training}, {dataset: bench, role: test}], action: train, purpose: research}
+      expect:
+        - The 2 similar structures are not in the resolved training input, because the selection is a predicate.
+    - actor: evaluator
+      do: evaluate
+      with: {model: a model trained on all of candidates with no selection, dataset: bench}
+      expect:
+        - Before mudcat accepts the result, it checks the criterion against the training inputs of the model.
+        - The leakage assertion has the result violated, with the number of related elements.
+        - The evaluation result carries the violated assertion.
+  verifies: [QY-3, UP-3, PR-2]
+  gaps:
+    - No requirement covers similarity criteria and leakage assertions as records.
+    - The documents do not say if mudcat refuses an evaluation result with a violated assertion, or only marks it.
+
+- id: UC2-04
+  title: Raw data at an HPC centre, curated data in a cloud, and a job with no network
+  variant: placement
+  given:
+    - A snapshot with two representations. "raw" is on an HPC file system. "curated" is in a cloud bucket.
+    - The HPC storage resource has the management mode external, and access there is by Unix permissions.
+    - The compute nodes of the HPC centre cannot reach mudcat.
+  steps:
+    - actor: researcher
+      do: resolve
+      with: {inputs: [{snapshot: S, role: training}], action: train, purpose: research, place: cloud}
+      expect:
+        - The plan uses the representation "curated" and the cloud replicas.
+        - The credentials have a prefix scope.
+    - actor: researcher
+      do: resolve
+      with: {inputs: [{snapshot: S, representation: raw, role: training}], action: train, purpose: research, place: hpc, mode: before submission}
+      expect:
+        - The plan is a manifest file with POSIX paths. The job can read it with no connection to mudcat.
+        - mudcat issues no storage credentials. The result says that the site enforces access.
+    - actor: job
+      do: read
+      with: {plan: the manifest file, network: none}
+      expect:
+        - The job reads the files by path.
+        - The job writes its run record to a spool directory.
+    - actor: site-agent
+      do: record_run
+      with: {from: spool directory}
+      expect:
+        - The run exists in the catalog with the capture mode declared, and with its location at the HPC centre.
+    - actor: site-agent
+      do: report_inventory
+      with: {resource: hpc file system}
+      expect:
+        - mudcat reports each file that no replica record describes, and each replica record with no file.
+        - mudcat reports files whose Unix group does not agree with the access control of their collection.
+  verifies: [PL-1, PL-6, RD-2, RD-4, PR-5, OP-9]
+  gaps:
+    - Management modes (managed, external, reference) and enforcement levels of storage resources are not in the model.
+    - Resolution before submission, and run records that a job spools, are not in the architecture.
+    - No requirement covers the report of differences between Unix permissions and access control.
+
+- id: UC2-05
+  title: An archive of arrays that gets new data each month
+  variant: time
+  given:
+    - An artifact "reanalysis" with array structure. It has the dimensions time, level, latitude and longitude, and no element list.
+    - A dataset series /weather/reanalysis. Each month makes one snapshot.
+    - A model trained on the time range 1979 to 2018.
+    - A test definition with the time range 2020.
+  steps:
+    - actor: producer
+      do: commit
+      with: {dataset: /weather/reanalysis, branch: main, add: version with one more month}
+      expect:
+        - A new snapshot exists. Its change summary says one member replaced, and gives the added bytes.
+        - mudcat made no list of array elements.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: /weather/reanalysis, ref: main, selector: {time: [1979, 2018]}, role: training}], action: train, purpose: research}
+      expect:
+        - The resolution records the selector as the element-level input.
+        - The plan lists chunks, not elements.
+    - actor: evaluator
+      do: check_leakage
+      with: {train: the training inputs of the model, test: {dataset: /weather/reanalysis, selector: {time: [2020, 2020]}}, criterion: time-range overlap}
+      expect:
+        - The result is satisfied. mudcat computed it from the two selectors, with no scan of data.
+    - actor: evaluator
+      do: check_leakage
+      with: {train: the training inputs of the model, test: {dataset: /weather/reanalysis, selector: {time: [2018, 2019]}}, criterion: time-range overlap}
+      expect:
+        - The result is violated, with the range that overlaps.
+    - actor: reader
+      do: resolve
+      with: {inputs: [{dataset: /weather/reanalysis, as_of: 3 months before now}]}
+      expect:
+        - The result is the snapshot of that month.
+  verifies: [ST-1, ST-4, ST-5, UP-3, EV-14, QY-3]
+  gaps:
+    - No requirement covers a dataset series with one snapshot for each period.
+
+- id: UC2-06
+  title: An upstream group corrects one of its files
+  variant: time
+  given:
+    - Artifact X in /upstream, at version 1.
+    - Dataset /potentials/train-v1 with a follow rule for /upstream. Its tag ref v1 points to a published snapshot that contains X version 1.
+    - Model M1, trained on the tag ref v1.
+  steps:
+    - actor: upstream
+      do: register
+      with: {artifact: /upstream/X, content: corrected}
+      expect:
+        - X has version 2. Version 1 still resolves.
+    - actor: mudcat
+      do: commit
+      with: {dataset: /potentials/train-v1, branch: main, by: follow rule}
+      expect:
+        - A new snapshot on main contains X version 2.
+        - The tag ref v1 and its snapshot did not change.
+    - actor: researcher
+      do: changes
+      with: {dataset: /potentials/train-v1, from: v1, to: main}
+      expect:
+        - The answer lists X version 1 as removed and X version 2 as added.
+    - actor: researcher
+      do: query
+      with: {question: which models used an input that now has a newer version}
+      expect:
+        - The answer contains M1, with X as the input that changed.
+    - actor: researcher
+      do: commit
+      with: {dataset: /potentials/train-v1, branch: v1, add: anything}
+      expect:
+        - mudcat rejects the commit, because v1 is a tag ref and its snapshot is published.
+  verifies: [ID-3, ID-7, ID-8, EV-12, UP-13]
+  gaps:
+    - Follow rules are not in the model.
+    - No requirement covers the query for derived entities whose inputs have newer versions.

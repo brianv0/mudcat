@@ -19,6 +19,7 @@ For any piece of data and any model, mudcat answers five questions:
 | Document | Contents |
 |---|---|
 | [docs/use-cases.md](docs/use-cases.md) | The five grounding use cases, with the evidence for each and the parts of the design that each one tests |
+| [evals/](evals/README.md) | 31 simulated interactions with the system, at least six for each grounding use case, with the results that mudcat must give |
 | [docs/model.md](docs/model.md) | The conceptual data model: RDF vocabularies (PROV-O, DCAT, CSVW, and ODRL for terms of use), Zanzibar-style access control, and how it maps to Datacat, iRODS, Rucio and the Butler |
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
@@ -45,6 +46,7 @@ The project will build mudcat with constitution-based, spec-driven development. 
 
 - **Constitution.** The design principles above are the first draft of the project constitution.
 - **Use cases.** Each feature specification must serve at least one of the five grounding use cases.
+- **Evals.** Each grounding use case has evals: scenarios that an implementation must pass. A feature specification names the evals that it makes pass.
 - **Requirements.** The requirements document gives the inputs for the specifications.
 - **Specifications.** Each step in the architecture's build order is to become a feature specification. The plan and tasks for that step then come from the specification.
 

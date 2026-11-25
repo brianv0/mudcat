@@ -1,0 +1,228 @@
+# Use case 4: governed retrieval for assistants
+
+- id: UC4-01
+  title: Build a retrieval index from the change stream, and cite sources
+  variant: happy-path
+  given:
+    - 5,000 documents in /docs, in two collections with different readers.
+    - An enricher that splits each document into chunks and writes an embedding for each chunk.
+    - A retrieval service outside mudcat, with its own vector index and no data.
+  steps:
+    - actor: chunk-enricher
+      do: enrich
+      with: {collection: /docs, output: annotation set "chunks", key: byte range}
+      expect:
+        - Each chunk has a selector into one document version.
+        - Each embedding records the version of the embedding model.
+    - actor: retrieval-service
+      do: subscribe
+      with: {scope: /docs, stream: state documents}
+      expect:
+        - The subscription has the identity of the service.
+    - actor: retrieval-service
+      do: backfill
+      with: {subscription: the one above}
+      expect:
+        - The service gets one state document for each entity that its identity can read.
+        - Each state document has the access part, with the ACL root.
+        - After the backfill, the live stream continues with no gap.
+    - actor: assistant
+      do: search
+      with: {text: "holiday policy for contractors", as_user: maria}
+      expect:
+        - The results contain only chunks of documents that maria can read.
+    - actor: assistant
+      do: record_run
+      with: {kind: answer, used: the chunks of the answer, role: retrieval}
+      expect:
+        - The answer refers to the exact document versions and the selectors of the chunks.
+  verifies: [ST-4, ST-13, ST-14, EV-4, EV-5, EV-6, EV-8, EV-11, PR-2]
+  gaps:
+    - Retrieval is not an action in usage grants, and there is no retrieval role in provenance.
+
+- id: UC4-02
+  title: A person loses access, and the index does not know it yet
+  variant: policy
+  given:
+    - The user "ken" is a member of the group "contractors". The group can read /docs/projects.
+    - The vector index of the retrieval service has a copy of the permissions from one hour ago.
+  steps:
+    - actor: admin
+      do: revoke
+      with: {subject: ken, from: group contractors}
+      expect:
+        - The change stream has an event for the removed relationship.
+    - actor: assistant
+      do: search
+      with: {text: "project budget", as_user: ken, immediately_after: previous step}
+      expect:
+        - mudcat returns no result from /docs/projects.
+        - mudcat did not use a cached decision for this check.
+    - actor: assistant
+      do: resolve
+      with: {inputs: [{document: one document in /docs/projects}], as_user: ken}
+      expect:
+        - mudcat denies the request and issues no credentials.
+    - actor: retrieval-service
+      do: poll
+      with: {from: its position}
+      expect:
+        - The service gets the event and can update its copy of the permissions.
+    - actor: auditor
+      do: query
+      with: {question: access decisions for ken after the revocation}
+      expect:
+        - The audit log has each denial.
+  verifies: [AC-1, AC-7, AC-8, EV-1, EV-11]
+  gaps: []
+
+- id: UC4-03
+  title: A document is removed, and one consumer is behind
+  variant: removal
+  given:
+    - Document D with 12 chunks and their embeddings.
+    - Two consumers of the state stream. Consumer A is current. Consumer B stopped two hours ago.
+  steps:
+    - actor: records-officer
+      do: invalidate
+      with: {target: D, reason: "retention period ended"}
+      expect:
+        - The stream has a removal event for D and for its 12 chunks.
+    - actor: consumer-a
+      do: poll
+      with: {from: its position}
+      expect:
+        - Consumer A gets the removal events, and deletes D and its chunks from its index.
+    - actor: assistant
+      do: search
+      with: {text: a phrase that only D contains}
+      expect:
+        - mudcat returns no chunk of D, also when the search index of mudcat has not processed the removal.
+    - actor: consumer-b
+      do: poll
+      with: {from: its old position}
+      expect:
+        - Consumer B gets all the events that it missed, in order, the removal events included.
+    - actor: consumer-b
+      do: fault
+      with: {effect: its position is older than the retention period of change events}
+      expect:
+        - mudcat tells consumer B that its position is too old.
+        - After a backfill, consumer B has no state document for D.
+    - actor: records-officer
+      do: purge
+      with: {target: D}
+      expect:
+        - Each replica of D is deleted, with one receipt for each.
+  verifies: [EV-3, EV-5, EV-7, EV-11, UP-7, UP-9]
+  gaps:
+    - No requirement covers a position that is older than the retention period of change events.
+    - The duty of a subscriber to delete its copy after a removal event is in the architecture, but there is no requirement for it.
+
+- id: UC4-04
+  title: Many writers, and a consumer that must not miss an event
+  variant: concurrency
+  given:
+    - 20 writers that register documents at the same time. Some transactions are long, and some are short.
+    - One consumer that polls the change stream each 100 ms and stores its position.
+  steps:
+    - actor: writers
+      do: register
+      with: {count: "10,000 documents", transactions: overlapping}
+      expect:
+        - Each registration that commits makes one event. A registration that rolls back makes no event.
+    - actor: consumer
+      do: poll
+      with: {repeat: until the stream is empty}
+      expect:
+        - The consumer never gets an event with a position lower than a position that it got before.
+        - At the end, the consumer has exactly 10,000 registration events.
+    - actor: consumer
+      do: fault
+      with: {effect: "the consumer stops, and starts again from its stored position"}
+      expect:
+        - The consumer gets no gap. It can get some events a second time.
+        - With the revision of each event, the consumer applies each change one time only.
+    - actor: writers
+      do: register
+      with: {same: "one document a second time, with the same content"}
+      expect:
+        - No new version exists, and the stream has no second registration event.
+  verifies: [EV-1, EV-3, EV-13, OP-4, OP-5]
+  gaps: []
+
+- id: UC4-05
+  title: A subscription must see only what its identity can read
+  variant: isolation
+  given:
+    - Tenant T1 with the collections /docs/hr and /docs/eng.
+    - A subscription with an identity that can read /docs/eng only.
+    - An attribute "salary band" with the custody level customer-held, on documents in both collections.
+    - Tenant T2 in the same instance, with a document whose ID is known to the subscriber.
+  steps:
+    - actor: writer
+      do: register
+      with: {documents: "one in /docs/hr, one in /docs/eng"}
+      expect: []
+    - actor: subscriber
+      do: poll
+      with: {from: start}
+      expect:
+        - The subscriber gets the events for /docs/eng and no event for /docs/hr.
+        - No event contains a value of "salary band".
+    - actor: subscriber
+      do: backfill
+      with: {scope: all}
+      expect:
+        - The backfill has no state document from /docs/hr and none from tenant T2.
+    - actor: subscriber
+      do: query
+      with: {id: the ID of the document of tenant T2, endpoint: endpoint of T1}
+      expect:
+        - mudcat answers that the entity does not exist.
+    - actor: subscriber
+      do: poll
+      with: {endpoint: endpoint of T2, token: token for T1}
+      expect:
+        - mudcat refuses the request, because the audience of the token is not T2.
+  verifies: [EV-6, ST-10, OP-8, OP-12, ID-12]
+  gaps: []
+
+- id: UC4-06
+  title: A document changes after an answer cited it
+  variant: time
+  given:
+    - Document P at version 1. An answer A1 of the assistant cites P version 1 with a selector.
+    - Source "handbook" grants the action use for retrieval, but does not grant train.
+  steps:
+    - actor: author
+      do: register
+      with: {artifact: P, content: revised}
+      expect:
+        - P has version 2. The state stream has the new state document of P.
+    - actor: reviewer
+      do: resolve
+      with: {inputs: [{citation: A1}]}
+      expect:
+        - The citation resolves to P version 1 and the same selector.
+    - actor: author
+      do: register
+      with: {artifact: P, delete: true}
+      expect:
+        - P has a delete marker as its newest version.
+        - A search does not return P.
+        - P version 1 and P version 2 still resolve by their version IDs for a user with access.
+    - actor: reviewer
+      do: resolve
+      with: {inputs: [{artifact: P, as_of: the time of A1}]}
+      expect:
+        - The result is P version 1.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{collection: the collection of P, role: training}], action: train, purpose: research}
+      expect:
+        - mudcat refuses the resolution, because "handbook" does not grant train.
+  verifies: [ID-2, ID-3, UP-2, UP-12, UP-13, EV-4, EV-14]
+  gaps:
+    - No requirement covers the delete marker.
+    - Retrieval is not an action in usage grants.

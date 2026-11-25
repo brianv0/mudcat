@@ -1,0 +1,228 @@
+# Use case 1: curation of video and sensor data for model training
+
+- id: UC1-01
+  title: Register video in place, add captions, train a model
+  variant: happy-path
+  given:
+    - A bucket "lab-video" that mudcat does not manage. It holds 1,000 MP4 files.
+    - A collection /video/raw with a mount to "lab-video".
+    - A source "fleet-2026" with a grant for the action train and the purpose research.
+  steps:
+    - actor: site-agent
+      do: report_inventory
+      with: {resource: lab-video}
+      expect:
+        - 1,000 artifacts exist in /video/raw. Each has one version and one replica.
+        - Each version has a stream structure descriptor with its duration and frame rate.
+        - mudcat copied no bytes.
+    - actor: site-agent
+      do: verify
+      with: {resource: lab-video}
+      expect:
+        - Each replica has the state verified and a recorded checksum.
+    - actor: curator
+      do: commit
+      with: {dataset: /video/drive-clips, branch: main, add: all versions in /video/raw}
+      expect:
+        - Snapshot S1 exists with 1,000 members. The branch ref main points to S1.
+    - actor: caption-enricher
+      do: enrich
+      with: {dataset: /video/drive-clips, output: annotation set "captions", key: time span of 10 s}
+      expect:
+        - An annotation set "captions" exists. Its key is a version ID and a time span.
+        - Snapshot S2 exists. S2 shares all 1,000 video members with S1.
+        - Each caption records the enricher and its version.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{dataset: /video/drive-clips, ref: main, role: training}], action: train, purpose: research}
+      expect:
+        - A resolution exists. It names S2 and the version of "captions" exactly.
+        - The plan lists tasks with a replica URL, a time span, expected bytes and expected elements.
+        - The resolution holds a policy decision with the outcome permitted.
+    - actor: trainer
+      do: read
+      with: {plan: from the resolution, engine: Ray}
+      expect:
+        - The job reads the bytes directly from "lab-video".
+        - mudcat records the usage with the capture mode observed.
+    - actor: trainer
+      do: publish_model
+      with: {artifact: /models/drive-vlm, files: checkpoint}
+      expect:
+        - A model version exists. Its lineage leads to the resolution, to S2 and to "captions".
+  verifies: [ST-1, ST-4, ST-5, ST-14, ID-4, UP-1, UP-3, RD-1, RD-2, RD-7, RD-8, PR-2, PR-4]
+  gaps:
+    - No requirement states that registration from an inventory makes no copy of bytes.
+    - Mounts between a collection and a storage resource are not in the model.
+
+- id: UC1-02
+  title: Two enrichers commit to the same branch at the same time
+  variant: concurrency
+  given:
+    - A dataset /video/drive-clips. Its branch ref main points to snapshot S2.
+    - Two enrichers that run at the same time. One writes "quality scores", the other "embeddings".
+    - A subscriber to the change stream of the dataset.
+  steps:
+    - actor: score-enricher
+      do: commit
+      with: {dataset: /video/drive-clips, branch: main, add: annotation set "quality scores", requirement: branch is main}
+      expect:
+        - The commit succeeds.
+    - actor: embed-enricher
+      do: commit
+      with: {dataset: /video/drive-clips, branch: main, add: annotation set "embeddings", requirement: branch is main, at_the_same_time_as: previous step}
+      expect:
+        - The commit succeeds with no retry by the client.
+        - The newest snapshot contains the two annotation sets.
+    - actor: curator
+      do: commit
+      with: {dataset: /video/drive-clips, branch: main, remove: 10 members, requirement: main points to S2}
+      expect:
+        - mudcat rejects the commit with a conflict, because main does not point to S2.
+        - No member was removed.
+    - actor: subscriber
+      do: poll
+      with: {from: position before the commits}
+      expect:
+        - The subscriber gets one snapshot-committed event for each successful commit.
+        - The positions increase with no event out of order.
+        - Each event carries a change summary with numbers and sizes.
+  verifies: [ID-7, EV-1, EV-3, EV-13, PF-5]
+  gaps:
+    - No requirement states that a commit that only adds members succeeds without a retry by the client.
+
+- id: UC1-03
+  title: The GPUs are in another cloud and no complete copy is there
+  variant: placement
+  given:
+    - A published snapshot S2 of /video/drive-clips, complete and verified on "lab-video" in cloud A.
+    - A storage resource "gpu-cache" in cloud B, managed by mudcat, with no replicas.
+    - A training cluster in cloud B.
+  steps:
+    - actor: trainer
+      do: query
+      with: {question: on which storage resources is S2 complete and verified}
+      expect:
+        - The answer contains "lab-video" only.
+    - actor: trainer
+      do: add_rule
+      with: {subject: S2, resources: gpu-cache, copies: 1, lifetime: 14 days}
+      expect:
+        - mudcat sends transfer requests to a mover.
+        - The completeness record for S2 on "gpu-cache" says not complete.
+    - actor: mover
+      do: fault
+      with: {effect: 3 files arrive with wrong bytes}
+      expect:
+        - After verification, the 3 replicas have the state suspect.
+        - The completeness record for S2 on "gpu-cache" still says not complete.
+    - actor: trainer
+      do: resolve
+      with: {inputs: [{snapshot: S2, role: training}], action: train, purpose: research, place: cloud B}
+      expect:
+        - The plan uses "gpu-cache" for the verified replicas.
+        - The plan does not use a suspect replica. For the 3 files, it uses "lab-video" or reports that they are not available in cloud B.
+    - actor: time
+      do: time_passes
+      with: {duration: 15 days}
+      expect:
+        - The replicas on "gpu-cache" have no lock. mudcat can remove them.
+        - The replicas on "lab-video" did not change.
+  verifies: [PL-1, PL-2, RD-4, QY-4]
+  gaps:
+    - No requirement covers the lifetime of a replication rule and the removal of replicas after it ends.
+
+- id: UC1-04
+  title: Find rare clips by text and by similarity
+  variant: policy
+  given:
+    - 100,000 clips with captions and embeddings in /video/drive-clips.
+    - A user "ana" who can read /video/drive-clips, but not the collection /video/partner.
+    - Clip C7 was invalidated after the search index was built. The index has not processed the removal yet.
+  steps:
+    - actor: ana
+      do: search
+      with: {text: "pedestrain at night in rain"}
+      expect:
+        - The results contain clips with the caption word "pedestrian", although the query has a spelling error.
+        - The rank uses lexical match and vector similarity.
+        - No result is from /video/partner.
+        - Clip C7 is not in the results.
+    - actor: ana
+      do: search
+      with: {similar_to: one result clip, filter: "tag weather = rain"}
+      expect:
+        - The results are clips with a similar embedding, and all have the tag value rain.
+    - actor: ana
+      do: select
+      with: {dataset: /video/drive-clips, predicate: the search above, name: night-rain}
+      expect:
+        - A selection exists with the hash of its resolved element list.
+        - mudcat copied no clips and no manifests.
+  verifies: [EV-9, EV-10, EV-11, UP-9, ST-17]
+  gaps: []
+
+- id: UC1-05
+  title: A caller in another country asks for data under an export rule
+  variant: placement
+  given:
+    - A collection /video/cn with the tag "jurisdiction = CN-export-controlled".
+    - Replicas only on a storage resource in the jurisdiction CN.
+    - A trainer who has read access to /video/cn, and whose compute is in the EU.
+    - A second trainer with the same access, whose compute is in the jurisdiction CN.
+  steps:
+    - actor: trainer-eu
+      do: resolve
+      with: {inputs: [{dataset: /video/cn/clips, role: training}], action: train, purpose: research, place: EU}
+      expect:
+        - mudcat refuses the resolution. The error names the jurisdiction rule.
+        - mudcat issues no credentials.
+        - The audit log has the refusal.
+    - actor: trainer-cn
+      do: resolve
+      with: {inputs: [{dataset: /video/cn/clips, role: training}], action: train, purpose: research, place: CN}
+      expect:
+        - The resolution succeeds.
+        - The credentials have the scope of one prefix that is completely inside the ACL root of /video/cn.
+    - actor: admin
+      do: add_rule
+      with: {subject: /video/cn/clips, resources: any resource in the EU, copies: 1}
+      expect:
+        - mudcat rejects the rule, because the data cannot leave the jurisdiction.
+  verifies: [RD-3, RD-4, RD-9, AC-8]
+  gaps:
+    - No requirement states that a replication rule must obey jurisdiction and egress rules.
+
+- id: UC1-06
+  title: A new version of the caption model, and descriptions that need review
+  variant: time
+  given:
+    - A resolution R1 that a model used. R1 names the annotation set "captions" at version 1, from the enricher "captioner" version 1.0.
+    - The enricher "captioner" gets version 2.0.
+    - An enricher "describer" that writes a description for each dataset. Its output needs review.
+  steps:
+    - actor: caption-enricher
+      do: enrich
+      with: {dataset: /video/drive-clips, output: annotation set "captions", enricher_version: "2.0"}
+      expect:
+        - During the run, readers still get "captions" version 1.
+        - After the run, a new snapshot holds "captions" version 2. Each value records the version 2.0.
+    - actor: auditor
+      do: resolve
+      with: {again: R1}
+      expect:
+        - The result names "captions" version 1, as R1 did.
+    - actor: describer
+      do: enrich
+      with: {target: dataset /video/drive-clips, output: description}
+      expect:
+        - The description has the status proposed.
+        - A search by a normal user does not match the proposed description.
+    - actor: curator
+      do: review
+      with: {target: the proposed description, decision: accept}
+      expect:
+        - The description is visible, and records that a model wrote it and that a person accepted it.
+  verifies: [ST-13, ST-14, ST-15, ST-7, UP-3, ID-3]
+  gaps:
+    - No requirement states that old outputs of an enricher stay visible until the new outputs are complete.

@@ -1,0 +1,272 @@
+# Use case 5: a shared facility with many small groups
+
+- id: UC5-01
+  title: Two groups in one instance cannot see each other
+  variant: isolation
+  given:
+    - One hosted instance in the shared tier.
+    - No tenants yet.
+  steps:
+    - actor: operator
+      do: create_tenant
+      with: {name: group-a}
+      expect:
+        - The tenant has an ID from a cryptographic random generator.
+        - The tenant has its own endpoint.
+    - actor: operator
+      do: create_tenant
+      with: {name: group-b}
+      expect:
+        - The two tenants use the same tables. Each row has its tenant ID first in its key.
+    - actor: alice
+      do: register
+      with: {endpoint: group-a, artifact: /scans/s1}
+      expect:
+        - The artifact exists in the tenant group-a.
+    - actor: bob
+      do: query
+      with: {endpoint: group-b, id: the ID of /scans/s1}
+      expect:
+        - mudcat answers that the entity does not exist.
+    - actor: bob
+      do: search
+      with: {endpoint: group-b, text: s1}
+      expect:
+        - The results contain no entity of group-a.
+    - actor: bob
+      do: query
+      with: {endpoint: group-a, token: token for group-b}
+      expect:
+        - mudcat refuses the request.
+    - actor: operator
+      do: fault
+      with: {effect: a background job runs with no tenant}
+      expect:
+        - The job fails. It reads and writes no data.
+  verifies: [ID-11, ID-12, OP-8, OP-12, OP-13]
+  gaps:
+    - No requirement states that a background job or a cache entry with no tenant is an error.
+
+- id: UC5-02
+  title: An embargo that ends by date or by publication
+  variant: time
+  given:
+    - A dataset of group-a from a session on the date D. The data policy gives sole access for three years.
+    - A user "eve" from outside the group, with a valid sign-in.
+  steps:
+    - actor: facility
+      do: write_metadata
+      with: {target: the dataset, attribute: embargo_until, value: D plus 3 years}
+      expect:
+        - The attribute is a condition for access to this dataset.
+    - actor: eve
+      do: resolve
+      with: {inputs: [{dataset: the dataset}], at: D plus 1 year}
+      expect:
+        - mudcat denies the request.
+        - eve can see that the dataset exists, with the description that the policy permits, but no data.
+    - actor: alice
+      do: resolve
+      with: {inputs: [{dataset: the dataset}], at: D plus 1 year}
+      expect:
+        - The resolution succeeds, because alice is in the group.
+    - actor: alice
+      do: mint_doi
+      with: {snapshot: a published snapshot with a part of the data}
+      expect:
+        - The snapshot has a DOI.
+        - The members of that snapshot are public at once. The other data of the dataset stays under embargo.
+    - actor: time
+      do: time_passes
+      with: {until: D plus 3 years and 1 day}
+      expect:
+        - eve can resolve the complete dataset. No batch job changed any record.
+    - actor: facility
+      do: write_metadata
+      with: {target: a second dataset, attribute: embargo_until, value: an extended date}
+      expect:
+        - The history shows the old date, the new date, who changed it and when.
+  verifies: [AC-1, AC-7, ID-5, ID-8, UP-13]
+  gaps:
+    - Conditions for access that use the metadata of each object are in the model, but there is no requirement for them.
+    - No requirement covers a DOI for a published snapshot.
+    - The documents do not say what a user without access can see of an entity under embargo.
+
+- id: UC5-03
+  title: The facility keeps data for 30 days only
+  variant: placement
+  given:
+    - A session of group-a with 2,000 files on the storage resource "facility-scratch". The facility manages this resource.
+    - A rule that replicas on "facility-scratch" end 30 days after the session.
+    - A bucket "group-a-archive" that the group owns. mudcat does not manage it.
+  steps:
+    - actor: alice
+      do: add_rule
+      with: {subject: the session dataset, resources: group-a-archive, copies: 1}
+      expect:
+        - A mover copies the files. Site agents verify the checksums.
+        - The dataset is complete and verified on "group-a-archive".
+    - actor: time
+      do: time_passes
+      with: {duration: 31 days}
+      expect:
+        - The replicas on "facility-scratch" have the state retired. The site agent deleted the bytes.
+        - The versions, their metadata and their lineage did not change.
+    - actor: alice
+      do: resolve
+      with: {inputs: [{dataset: the session dataset}]}
+      expect:
+        - The plan uses "group-a-archive".
+    - actor: carol
+      do: retire_replica
+      with: {dataset: a second session dataset with no other copy, resource: facility-scratch}
+      expect:
+        - mudcat warns that this is the last replica of each version.
+    - actor: carol
+      do: resolve
+      with: {inputs: [{dataset: the second session dataset}], after: its replicas ended}
+      expect:
+        - mudcat answers that no replica is available. The catalog records still exist.
+    - actor: site-agent
+      do: report_inventory
+      with: {resource: group-a-archive}
+      expect:
+        - If the group deleted a file in its own bucket, mudcat records the replica as lost. It does not treat this as an error of the facility.
+  verifies: [PL-1, PL-2, PL-6, RD-4, QY-4]
+  gaps:
+    - Management modes of storage resources are not in the model.
+    - No requirement covers the warning before the last replica of a version ends.
+
+- id: UC5-04
+  title: A group manages its members in a GitHub organisation
+  variant: failure
+  given:
+    - 'Tenant group-a. Its group "members" has a membership source: the team "beamtime-2026" of a GitHub organisation.'
+    - The users "alice" and "dan" are in the team. Each linked a GitHub account to a mudcat principal.
+    - The limit for the age of synchronised membership is 24 hours.
+  steps:
+    - actor: alice
+      do: sign_in
+      with: {method: device login, provider: GitHub}
+      expect:
+        - alice gets a mudcat token that is valid for the endpoint of group-a only.
+        - mudcat stores no token of GitHub after the exchange.
+    - actor: github
+      do: sync_membership
+      with: {event: dan removed from the team}
+      expect:
+        - dan is not a member of the group "members".
+    - actor: dan
+      do: resolve
+      with: {inputs: [{dataset: a dataset of group-a}]}
+      expect:
+        - mudcat denies the request.
+    - actor: github
+      do: fault
+      with: {effect: the interface of GitHub is not reachable for 25 hours}
+      expect:
+        - After 24 hours, the group "members" grants no access through this membership source.
+        - A grant that an owner gave directly to a user still works.
+    - actor: mallory
+      do: sign_in
+      with: {method: "a GitHub token of mallory, who is in the organisation but not in the team"}
+      expect:
+        - The sign-in succeeds, but mallory has no access to the data of the team.
+    - actor: ci-job
+      do: sign_in
+      with: {method: identity token of a pipeline, repository: the repository of the group, branch: main}
+      expect:
+        - The job can write to the collection that the trust rule names, and to no other collection.
+  verifies: [AC-1, AC-6, AC-7, OP-12]
+  gaps:
+    - Linked identities, membership sources, device sign-in and pipeline identity are not in the model, the architecture or the requirements.
+
+- id: UC5-05
+  title: Move a tenant from the shared tier to its own database
+  variant: failure
+  given:
+    - Tenant group-big in the shared tier, with 5,000,000 versions and a consumer of its change stream at the position P.
+    - A dedicated database with the same schema and no data.
+  steps:
+    - actor: operator
+      do: move_tenant
+      with: {tenant: group-big, to: the dedicated database}
+      expect:
+        - During the copy, mudcat accepts no writes for this tenant, and reads continue.
+        - Other tenants in the shared tier see no change.
+    - actor: operator
+      do: query
+      with: {question: compare the tenant before and after the move}
+      expect:
+        - Each record has the same key and the same ID as before.
+        - Each published snapshot has the same Merkle hash.
+    - actor: alice
+      do: resolve
+      with: {endpoint: endpoint of group-big, inputs: [{dataset: any}]}
+      expect:
+        - The endpoint did not change, and the request succeeds.
+    - actor: consumer
+      do: poll
+      with: {from: P}
+      expect:
+        - The consumer continues from P with no gap and no event out of order.
+    - actor: operator
+      do: fault
+      with: {effect: the copy fails at one half}
+      expect:
+        - The tenant continues in the shared tier with all its data, and accepts writes again.
+        - The dedicated database has no visible part of the tenant.
+    - actor: operator
+      do: query
+      with: {question: rows of group-big in the shared tier after a successful move}
+      expect:
+        - No rows stay in the shared tier.
+  verifies: [OP-7, OP-13, OP-14, ID-12, EV-13]
+  gaps:
+    - No requirement covers the positions of the change stream across a move of a tenant.
+    - No requirement states that a move that fails leaves the tenant in its first place.
+
+- id: UC5-06
+  title: Publish a dataset, correct it later, and give a copy to a second group
+  variant: happy-path
+  given:
+    - Tenant group-a with a dataset "structures" on the branch ref main.
+    - Tenant group-b in the same instance.
+  steps:
+    - actor: alice
+      do: publish
+      with: {dataset: structures, tag_ref: release-1}
+      expect:
+        - The snapshot has a Merkle hash and the status published.
+    - actor: alice
+      do: mint_doi
+      with: {snapshot: release-1}
+      expect:
+        - The snapshot has a DOI as an identifier.
+    - actor: alice
+      do: export
+      with: {snapshot: release-1, formats: [Croissant, DCAT]}
+      expect:
+        - The descriptions name the DOI, the licence, the fields with their units, and the checksums.
+    - actor: alice
+      do: commit
+      with: {dataset: structures, branch: main, replace: one member with a corrected version}
+      expect:
+        - A new snapshot exists on main.
+        - The DOI still resolves to release-1 with its first members.
+    - actor: alice
+      do: clone
+      with: {snapshot: release-1, to_tenant: group-b, terms: an agreement between the tenants}
+      expect:
+        - group-b has a dataset whose manifest references name the manifests of group-a, with a tenant mapping.
+        - mudcat copied no manifest and no data.
+        - mudcat records the copy between tenants in the audit log.
+    - actor: alice
+      do: purge
+      with: {target: a version in release-1 that the dataset of group-b still refers to}
+      expect:
+        - mudcat refuses to remove the version, and names the reference of group-b.
+  verifies: [ID-3, ID-5, ID-8, ID-13, IN-4, OP-8, OP-15, AC-8]
+  gaps:
+    - No requirement covers a DOI for a published snapshot.
+    - The documents do not say how a takedown in one tenant reaches a copy in a second tenant of the same instance.
