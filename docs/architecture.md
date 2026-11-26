@@ -873,14 +873,6 @@ This is the deletion workflow above. An invalidation of a source or element star
 
 A single PostgreSQL primary is a single-region write dependency. Multi-region deployments either accept that and use read replicas elsewhere, or run one instance per region and federate the tenants. This document proposes no multi-primary design.
 
-## Controlled data
-
-Some data is under rules that control who can read it and where it can go ([controlled-data.md](controlled-data.md)). Three parts of the architecture change for such data.
-
-- **The boundary rule.** Each receiver of data or metadata has an entry in the configuration that lists the control marks that it can get: each storage resource, derived index, enricher, subscription and federated tenant. The ingest writer, the outbox relay, the enricher runtime, the placement reconciler and the gateways test this list before they send. A receiver with no entry gets nothing that has a mark.
-- **The enclave profile.** One instance runs inside the boundary of the organisation, with each component inside and with no connection out. Enrichers that call a service outside the boundary are off. Sign-in uses the identity provider of the organisation.
-- **Cryptography.** The configuration lists the cryptographic modules that the deployment can use, for connections, for storage and for signatures. mudcat uses no other module. Thus a deployment can use only modules that have a validation.
-
 ## Scale envelope
 
 | Quantity | Target | Notes |

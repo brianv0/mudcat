@@ -126,8 +126,3 @@
   statement: Two reads as of the same commit give the same entries, except for content that policy removed in between.
   observe: Repeat each read with its commit ID after later commits, and compare the answers.
   verifies: [ID-22, UP-12]
-
-- id: INV-26
-  statement: No entity with a control mark, and no metadata of it, is in a store or a message of a receiver that the configuration does not permit for that mark.
-  observe: After each step, examine each storage resource, each derived index, each subscriber and each federated tenant that has no permission for the mark.
-  verifies: [OP-23, UP-18]

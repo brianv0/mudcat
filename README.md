@@ -19,11 +19,10 @@ For any piece of data and any model, mudcat answers five questions:
 | Document | Contents |
 |---|---|
 | [docs/use-cases.md](docs/use-cases.md) | The eight grounding use cases, with the evidence for each and the parts of the design that each one tests |
-| [evals/](evals/README.md) | 45 task templates that expand into 800 variants, 26 invariants, 40 reference scenarios, and a benchmark for search, with the results that mudcat must give |
+| [evals/](evals/README.md) | 42 task templates that expand into 694 variants, 25 invariants, 40 reference scenarios, and a benchmark for search, with the results that mudcat must give |
 | [docs/model.md](docs/model.md) | The conceptual data model: RDF vocabularies (PROV-O, DCAT, CSVW, and ODRL for terms of use), Zanzibar-style access control, and how it maps to Datacat, iRODS, Rucio and the Butler |
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
 | [docs/search.md](docs/search.md) | The search use cases, and the measures and targets for the quality, speed and freshness of search |
-| [docs/controlled-data.md](docs/controlled-data.md) | A profile for data that United States rules control: CUI, export control and the NIST requirements. What a catalog must do, what mudcat does, and what it cannot do |
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
 | [docs/requirements.md](docs/requirements.md) | The system requirements, written to the NASA guidance for requirements, with a rationale and a verification method for each |
 | [docs/fields.md](docs/fields.md) | Guidelines for each scientific and technical field: domain semantics, schema profiles, formats and examples |

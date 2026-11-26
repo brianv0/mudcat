@@ -121,14 +121,6 @@ Identifier prefixes:
 | AC-6 | mudcat shall deny access when the authorization port cannot give a decision. | Security functions must fail closed. | T |
 | AC-7 | After mudcat removes a grant, mudcat shall deny the access that the grant gave in each check that starts after the removal. | Takedowns and revocations must take effect at once. | T |
 | AC-8 | mudcat shall write each access decision at an enforcement point to an append-only audit log. | Audits and regulated users need a record of decisions. | I |
-| AC-9 | mudcat shall evaluate access conditions on the attributes of a principal, and shall not use an attribute after its expiry. | Rules for controlled data depend on who the person is, for example the status as a US person, and such facts have a source and a period of validity. | T |
-| AC-10 | mudcat shall apply the same access checks to the operators of an instance as to all other principals. | Staff who can read the catalog have access to all that it holds; under export rules such access is itself the controlled event. | T |
-| AC-11 | mudcat shall record, with each access decision in the audit log, the attributes of the principal and the location of the caller that the decision used. | An organisation must show later why an access was permitted. | T |
-| AC-12 | mudcat shall show the notice text that the deployment configures before it gives access through an interactive interface. | Systems that hold controlled information must show a notice about their use before access; NIST SP 800-171 has this requirement. | T |
-| AC-13 | mudcat shall end a session after the period with no activity that the deployment configures. | A session that stays open gives access to a person who did not sign in. | T |
-| AC-14 | mudcat shall let only principals with the audit role read the audit log, and shall let no principal change or remove an entry of it. | The record of access must be safe from the persons whose access it records, administrators included. | T |
-| AC-15 | When the deployment sets this option, mudcat shall refuse each request at an enforcement point while it cannot write the audit log. | An access with no record cannot be shown later; a system for controlled information must react to a failure of its audit. | T |
-| AC-16 | mudcat shall store no password of a user. | The identity provider of the organisation holds the credentials and applies its rules for them. | I |
 
 ## Usage policy and deletion
 
@@ -151,9 +143,6 @@ Identifier prefixes:
 | UP-15 | mudcat shall accept a manifest at resolution without a check of each element only if every source that the manifest uses permits the requested action and purpose, and no entry is in the invalidation set. | A check of each element is too slow at 10^11 elements, but a shortcut must not let excluded data through. | T |
 | UP-16 | mudcat shall refuse each action that needs a usage grant on a version whose source is unknown. | Data that nobody declared has no known terms, so no use of it can be shown to be permitted. | T |
 | UP-17 | When mudcat invalidates or purges a version, mudcat shall apply the same operation to each intermediate and each cache that derives from that version. | Copies and derived shards of removed content must not stay in storage; intermediates and caches are the copies that people forget. | T |
-| UP-18 | mudcat shall give to each entity that derives from marked entities the most restrictive value of each control mark of its inputs. | A subset, a cache, an embedding index or a model of controlled data is controlled as its inputs are. | T |
-| UP-19 | mudcat shall lower or remove a control mark only with a recorded decision of a principal who has the role for that mark. | Only the authority for a rule can release information from that rule. | T |
-| UP-20 | mudcat shall include the control marks of an entity in each description and in each export of that entity. | The rules for controlled information need a marking on each copy that leaves a system. | T |
 
 ## Data access and resolution
 
@@ -259,11 +248,6 @@ Identifier prefixes:
 | OP-20 | mudcat shall keep the staged parts of a registration commit that it refused, until they expire. | A writer must be able to correct a commit of millions of entries with no new upload. | T |
 | OP-21 | mudcat shall append the versions of a registration commit to a branch ref of a dataset in the transaction of that commit, when the commit names the branch ref. | A reader must not see files that are registered and not yet members of their dataset. | T |
 | OP-22 | mudcat shall remove a staged part that no commit used after TBD hours. | Parts of jobs that failed must not stay in the catalog database. | T |
-| OP-23 | mudcat shall send data or metadata with a control mark to a storage resource, a derived index, an enricher, a subscriber or another tenant only if the configuration permits that receiver for that mark. | The metadata of controlled data is controlled, and each service outside the boundary is a possible release. | T |
-| OP-24 | mudcat shall use, for each cryptographic function, only the cryptographic modules that the configuration of the deployment lists. | The requirements for controlled information need validated cryptographic modules, and a strong algorithm in a module with no validation does not meet them. | I |
-| OP-25 | mudcat shall keep a tenant that the deployment designates as controlled in a database that holds no other tenant. | Rules for controlled information ask that shared resources transfer nothing between users of a system; the shared tier is one set of tables for many tenants. | I |
-| OP-26 | mudcat shall encrypt each backup and each export of a tenant with a key that the deployment configures. | A backup holds a copy of all that the catalog holds, and it leaves the system that protects the original. | T |
-| OP-27 | mudcat shall send data to a gateway, a connector, an enricher service or the vendor only after the configuration of the deployment turned that function on. | A system for controlled information must have only the functions that it needs, and each function that sends data out is a possible release. | T |
 
 ## Performance and scale
 
@@ -308,5 +292,3 @@ Each of these queries shall be possible as one request to mudcat. The verificati
 | QY-10 | mudcat shall report, for a given snapshot, the number of resolutions for each action and the time of the last resolution. |
 | QY-11 | mudcat shall list the datasets, the models and the deployments that derive from a given version, with the owner of each. |
 | QY-12 | mudcat shall list each dataset whose structure contains a given field, or whose inferred structure has that field as a candidate, with the score of each candidate. |
-| QY-13 | mudcat shall list the entities with a given control mark that a given principal or a given credential could reach in a given period, and those that it resolved. |
-| QY-14 | mudcat shall list each replica, each derived index and each export that holds entities with a given control mark, with its location. |
