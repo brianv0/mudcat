@@ -107,6 +107,7 @@ The assistant made these decisions while it wrote the documents and the evals. E
 - **Open in commits:** a read as of a commit can wait for the relay that orders commits. Nobody measured this wait.
 - **Not checked:** the licences of the ACORDAR and NTCIR test collections, and the release of Iceberg whose compatibility kit mudcat must pass.
 - **Many values are TBD or TBR** in requirements.md.
+- **Tenant encryption is an exploration.** [tenant-encryption.md](tenant-encryption.md) has a design for the immutable parts, four options for the catalog database and five questions for the owner of the project. No requirement and no eval comes from it yet.
 - **A sketch of the database schema exists outside the repository,** by decision. It is older than the tenant key, the commit record and the registration commit, and its outbox sequence is not in commit order.
 
 ## 4. Conventions of the project

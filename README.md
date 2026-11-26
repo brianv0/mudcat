@@ -24,6 +24,7 @@ For any piece of data and any model, mudcat answers five questions:
 | [docs/architecture.md](docs/architecture.md) | A high-level architecture: components, storage planes, main flows, deployment profiles and a build order |
 | [docs/search.md](docs/search.md) | The search use cases, and the measures and targets for the quality, speed and freshness of search |
 | [docs/hosted.md](docs/hosted.md) | How mudcat can run as a hosted service: control plane and data plane, credentials, tenancy, regions and operations |
+| [docs/tenant-encryption.md](docs/tenant-encryption.md) | An exploration, with no decision: a key for each tenant, as in the Salesforce Database, for manifests, data files and the catalog database |
 | [docs/requirements.md](docs/requirements.md) | The system requirements, written to the NASA guidance for requirements, with a rationale and a verification method for each |
 | [docs/fields.md](docs/fields.md) | Guidelines for each scientific and technical field: domain semantics, schema profiles, formats and examples |
 | [docs/open-items.md](docs/open-items.md) | Working notes: what the discussion decided and the documents do not yet contain, the decisions that need a confirmation, and the conventions of the project |
