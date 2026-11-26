@@ -124,6 +124,11 @@ Identifier prefixes:
 | AC-9 | mudcat shall evaluate access conditions on the attributes of a principal, and shall not use an attribute after its expiry. | Rules for controlled data depend on who the person is, for example the status as a US person, and such facts have a source and a period of validity. | T |
 | AC-10 | mudcat shall apply the same access checks to the operators of an instance as to all other principals. | Staff who can read the catalog have access to all that it holds; under export rules such access is itself the controlled event. | T |
 | AC-11 | mudcat shall record, with each access decision in the audit log, the attributes of the principal and the location of the caller that the decision used. | An organisation must show later why an access was permitted. | T |
+| AC-12 | mudcat shall show the notice text that the deployment configures before it gives access through an interactive interface. | Systems that hold controlled information must show a notice about their use before access; NIST SP 800-171 has this requirement. | T |
+| AC-13 | mudcat shall end a session after the period with no activity that the deployment configures. | A session that stays open gives access to a person who did not sign in. | T |
+| AC-14 | mudcat shall let only principals with the audit role read the audit log, and shall let no principal change or remove an entry of it. | The record of access must be safe from the persons whose access it records, administrators included. | T |
+| AC-15 | When the deployment sets this option, mudcat shall refuse each request at an enforcement point while it cannot write the audit log. | An access with no record cannot be shown later; a system for controlled information must react to a failure of its audit. | T |
+| AC-16 | mudcat shall store no password of a user. | The identity provider of the organisation holds the credentials and applies its rules for them. | I |
 
 ## Usage policy and deletion
 
@@ -256,6 +261,9 @@ Identifier prefixes:
 | OP-22 | mudcat shall remove a staged part that no commit used after TBD hours. | Parts of jobs that failed must not stay in the catalog database. | T |
 | OP-23 | mudcat shall send data or metadata with a control mark to a storage resource, a derived index, an enricher, a subscriber or another tenant only if the configuration permits that receiver for that mark. | The metadata of controlled data is controlled, and each service outside the boundary is a possible release. | T |
 | OP-24 | mudcat shall use, for each cryptographic function, only the cryptographic modules that the configuration of the deployment lists. | The requirements for controlled information need validated cryptographic modules, and a strong algorithm in a module with no validation does not meet them. | I |
+| OP-25 | mudcat shall keep a tenant that the deployment designates as controlled in a database that holds no other tenant. | Rules for controlled information ask that shared resources transfer nothing between users of a system; the shared tier is one set of tables for many tenants. | I |
+| OP-26 | mudcat shall encrypt each backup and each export of a tenant with a key that the deployment configures. | A backup holds a copy of all that the catalog holds, and it leaves the system that protects the original. | T |
+| OP-27 | mudcat shall send data to a gateway, a connector, an enricher service or the vendor only after the configuration of the deployment turned that function on. | A system for controlled information must have only the functions that it needs, and each function that sends data out is a possible release. | T |
 
 ## Performance and scale
 

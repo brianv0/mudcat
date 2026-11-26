@@ -1046,6 +1046,50 @@
   verifies: [EV-11, EV-19, EV-20, OP-8, PF-15]
   reference: UC5-01
 
+- id: T5.7
+  use_case: 5
+  name: controlled-tenant
+  goal: Operate a tenant that holds controlled data. Nothing leaves it by a function that nobody turned on.
+  axes:
+    function: [the-public-catalog, a-connector-to-an-outside-broker, an-enricher-that-calls-an-outside-service, the-gateway-for-agents, measures-sent-to-the-vendor, a-backup]
+    configuration: [not-turned-on, turned-on-for-the-mark]
+    audit_log: [can-be-written, cannot-be-written]
+  fixture: >
+    A tenant that the deployment designates as controlled. Its datasets have a control mark. An
+    administrator, or a part of mudcat, starts this function: {function}. The configuration has the
+    function {configuration}. At that time the audit log {audit_log}. The option to refuse requests with
+    no audit is set.
+  oracle:
+    - if: {audit_log: cannot-be-written}
+      then: {outcome: refused-for-audit}
+    - if: {function: a-backup}
+      then: {outcome: backup-made}
+    - if: {configuration: not-turned-on}
+      then: {outcome: function-is-off}
+    - else: {outcome: function-runs-inside-its-permission}
+  checks:
+    - check: The tenant is in a database that holds no other tenant.
+    - outcome: refused-for-audit
+      check: mudcat refuses the request and raises an alert. No data leaves the tenant.
+    - outcome: backup-made
+      check: The backup is encrypted with the key of the deployment, and the audit log has the principal who made it.
+    - outcome: backup-made
+      when: {configuration: not-turned-on}
+      check: The backup goes only to the place that the deployment configured for backups.
+    - outcome: function-is-off
+      check: The function sends nothing, and its state shows that the configuration did not turn it on.
+    - outcome: function-is-off
+      when: {function: the-public-catalog}
+      check: mudcat serves no landing page and no sitemap for the tenant.
+    - outcome: function-is-off
+      when: {function: measures-sent-to-the-vendor}
+      check: No connection to the vendor is opened.
+    - outcome: function-runs-inside-its-permission
+      check: The function gets only the entities whose mark the configuration permits for it, and the audit log has each of them.
+  invariants: [INV-6, INV-9, INV-26]
+  verifies: [OP-23, OP-25, OP-26, OP-27, AC-14, AC-15, AC-8]
+  reference: UC5-01
+
 # ---------------------------------------------------------------- use case 6
 
 - id: T6.1

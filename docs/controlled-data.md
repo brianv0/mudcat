@@ -55,11 +55,68 @@ Access to the data in its encrypted form is then not a release. A service that h
 | Markings on what leaves | Each description and each export carries the marks of its entity (UP-20). A public description does not exist for a marked entity | Added with this profile |
 | Encrypted data that a service cannot read | The custody level "customer-encrypted" for metadata, and storage that mudcat does not hold keys for ([hosted.md](hosted.md)) | In the hosted design |
 
+## Storing controlled data in mudcat
+
+**Can an organisation store such data in mudcat?** Yes, when mudcat runs inside a system that the organisation had assessed for that data. mudcat is then a part of that system, and the assessment covers it. A hosted mudcat can hold such data only when the service itself has the necessary authorization (see Deployment).
+
+**What mudcat holds.** mudcat does not put itself in the read path of the data, but it still holds controlled information. Each of these parts is in the scope of an assessment:
+
+| Part | What it holds |
+|---|---|
+| The catalog database | Names, paths, descriptions, structure, metadata payloads, statistics, provenance, grants and the audit log |
+| The manifest store | Lists of members and elements, with their metadata columns |
+| Derived indexes | The search index, embeddings, the content-identity index and lineage summaries |
+| The change stream and its outbox | Each change, with the values before and after |
+| Managed storage | The data bytes, where mudcat allocates the paths and issues the credentials |
+| Credentials that mudcat issues | Access to the bytes on each storage resource |
+| Backups and exports | A copy of all of the above |
+| Logs and measures of operation | Names of entities, and query texts where the tenant permits them |
+
+**What the software must do, by family of NIST SP 800-171.** The numbers are those of Revision 2. The organisation is responsible for each requirement. The table gives the part that only the software can supply.
+
+| Family | Requirement | What mudcat must do | Where |
+|---|---|---|---|
+| Access control | 3.1.1, 3.1.2, 3.1.5 | Give access only to principals with a grant, for the permitted actions, with roles that are narrow | AC-1 to AC-8 |
+| | 3.1.3, the flow of CUI | Send marked data and metadata only to permitted receivers | OP-23 |
+| | 3.1.4, separation of duties | Separate the roles for administration, for audit and for the release of a mark | AC-14, UP-19 |
+| | 3.1.9, notices | Show a notice that the deployment configures, before it gives access | AC-12 |
+| | 3.1.10, 3.1.11, sessions | End a session after a configured period | AC-13 |
+| | 3.1.22, public systems | Make no public description of a marked entity | UP-20, model section 4 |
+| Audit | 3.3.1, 3.3.2 | Record each decision, for one identified principal | AC-8, AC-11 |
+| | 3.3.4, failure of audit | Refuse requests at enforcement points when it cannot write the audit log, and raise an alert | AC-15 |
+| | 3.3.8, 3.3.9, protection of audit | Let only the audit role read the log. Let no principal change it | AC-14 |
+| Configuration | 3.4.6, 3.4.7, least function | Have each gateway, connector and enricher off until the configuration turns it on. Send nothing to the vendor | OP-27 |
+| Identification | 3.5.1 to 3.5.3 | Take each identity from the identity provider of the organisation, which applies more than one factor. Store no password | AC-16 |
+| Media | 3.8.3, sanitization | Purge with a receipt for each replica | UP-7 to UP-11 |
+| | 3.8.4, markings | Put the marks on each export and each description | UP-20 |
+| | 3.8.9, backups | Encrypt each backup and each export of a tenant | OP-26 |
+| Communications | 3.13.4, shared resources | Keep a controlled tenant in a database with no other tenant | OP-25 |
+| | 3.13.8, 3.13.16, encryption | Encrypt each connection, and work on storage and a database that are encrypted | OP-24 |
+| | 3.13.11, validated cryptography | Use only the modules that the configuration lists | OP-24 |
+| Integrity | 3.14.1, flaws | Publish a list of the components of each release, so that the organisation can find flaws | Deliverable of each release |
+
+**Parts of the present design that must be off or changed for a controlled tenant.**
+
+- **The shared tier.** Many tenants in the tables of one database is not acceptable where a rule asks for no transfer through shared resources. A controlled tenant has its own database (OP-25).
+- **Sign-in with GitHub or a similar service,** and personal access tokens of such a service. The identity provider of the organisation replaces them.
+- **Connectors of the change stream** to brokers or indexes outside the boundary, the **public catalog**, the **federation feed** and the **gateway for agents**. Each one is off until the configuration permits it for a mark.
+- **Enrichers that call a service outside the boundary,** for example a model service that makes descriptions.
+- **Measures of operation** that record query texts, and any data that goes to the vendor.
+- **Discovery** stays possible, but the entries that it makes get the mark of their storage resource from the first moment.
+
+**What each release must supply for an assessment.** The organisation writes a system security plan. A release of mudcat helps with three documents: a table of which requirements the software supplies and which stay with the organisation, a list of the components of the release, and the list of cryptographic modules that it can use.
+
 ## Deployment
 
 **The enclave profile.** For controlled data, the normal deployment is one instance inside the boundary of the organisation. Each component is inside: the database, the search engine, the site agents, the enrichers and the change stream. Nothing connects out. Sign-in uses the identity provider of the organisation, with more than one factor. The sign-in with GitHub or a similar service, which the project proposes for small groups, is not for this profile. Universities operate such enclaves for research under these rules, some with high-performance computers.
 
 **A hosted service.** A hosted mudcat for controlled data must be a separate instance, in a region and with staff that the rules permit, and with the necessary authorization of the service itself. This is a property of the operator and not of the software. The same release runs in both forms (OP-7), so an organisation can start in its enclave.
+
+| Form | Who operates it | What it needs before it holds controlled data |
+|---|---|---|
+| Self-hosted in the enclave of the organisation | The organisation | The assessment of the organisation covers mudcat as a part of its system |
+| Hosted, as a separate instance for controlled data | The vendor | For CUI of defence contracts: the FedRAMP Moderate baseline or an equivalent that an assessor confirmed. For ITAR: no access by persons who are not US persons, operators included |
+| Hosted, with keys that only the customer holds | The vendor, who cannot read the content | The conditions of the encryption rule of ITAR. For CUI, the opinion of the security office that the service is outside the scope when it holds only ciphertext |
 
 **Encrypted custody.** The encryption rule of ITAR permits storage with a provider that cannot decrypt. In mudcat this is the custody level "customer-encrypted" for marked attributes, and storage whose keys the customer holds. The price is function: the service cannot search or compute on what it cannot read.
 

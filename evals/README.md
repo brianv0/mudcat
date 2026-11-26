@@ -5,7 +5,7 @@ Status: definitions only. There is no mudcat implementation yet, and no runner. 
 | Layer | File | Content |
 |---|---|---|
 | Invariants | [invariants.yaml](invariants.yaml) | 26 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 44 tasks with variation. `generate.py` expands them into 776 variants |
+| Task templates | [tasks.yaml](tasks.yaml) | 45 tasks with variation. `generate.py` expands them into 800 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
 | Benchmarks | [benchmarks/](benchmarks/) | Measured evals. The first one is for search: 13 query classes, 17 measures and 21 targets |
 | Conformance suites | [conformance/](conformance/) | Suites from other projects that mudcat must pass. The first one is the Iceberg REST Compatibility Kit |
@@ -86,6 +86,7 @@ These rules make a task effective:
 | T5.3 membership-source | Access follows the membership of an outside team | event, kind of grant | kind of request | 9 |
 | T5.4 tenant-move | Move a tenant to its own database | fault, consumer, writes during the move | number of versions | 8 |
 | T5.6 small-readable-share | Search where the caller can read a small part | readable share, number of matches, facets | | 14 |
+| T5.7 controlled-tenant | Operate a tenant with controlled data, with no function that nobody turned on | function, configuration, state of the audit log | | 24 |
 | T6.1 group-discovered-paths | See one logical dataset for files that nobody registered | pattern of the paths, grouping rules, checksums | number of files | 17 |
 | T6.2 find-unregistered | Find a dataset of another team with no help from that team | what the user knows, who described it, access | | 16 |
 | T6.3 audit-by-field | List each dataset that contains a sensitive field | kind of evidence, propagation of the tag | | 8 |
@@ -106,7 +107,7 @@ These rules make a task effective:
 | T8.4 import-and-train | Train on a public dataset together with own data | licence, purpose, reach of the files | format of the description | 17 |
 | T8.5 the-original-changes | Know when a public dataset changed or went away | state of the original, use in the tenant | | 10 |
 
-Variants for each use case: 142, 51, 170, 59, 71, 101, 103 and 79.
+Variants for each use case: 142, 51, 170, 59, 95, 101, 103 and 79.
 
 `generate.py` has these options:
 
@@ -209,7 +210,7 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A request for own data and public data together is refused completely when the terms of the public data do not permit it.
   - A person with no access to a discovered dataset does not find it in a search. Goods showed the metadata of each dataset to each engineer.
   - When the content of a public dataset changes with no new version, mudcat keeps the old checksums and makes new versions.
-- The tasks and the invariants cover 142 of the 204 requirements. Requirements for performance and for federation have no task yet.
+- The tasks and the invariants cover 147 of the 212 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 

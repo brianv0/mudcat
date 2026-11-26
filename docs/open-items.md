@@ -100,6 +100,8 @@ The assistant made these decisions while it wrote the documents and the evals. E
 | A control mark always propagates, with the most restrictive value, to statistics and embeddings also | model, section 3 |
 | Controlled data is a use case in reserve, with a profile, and not a grounding use case | use-cases.md |
 | The operators of an instance get the same access checks as all other principals | requirements, AC-10 |
+| A controlled tenant has its own database, and cannot be in the shared tier | requirements, OP-25 |
+| mudcat stores no password of a user. Sign-in for small groups with tokens of an outside service needs a check against this | requirements, AC-16 |
 
 ## 3. Known gaps
 
