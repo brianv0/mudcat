@@ -106,7 +106,21 @@ The rows in PostgreSQL are the difficult part, for the reason that the paper giv
 | **C. A smaller database.** Seal more kinds of records into tenant blocks: versions, provenance records, metadata payloads, audit records. PostgreSQL keeps pointers, recent rows and indexes | Most of the content gets the block design | Indexes in PostgreSQL still hold names and indexed values in the clear. Queries must read blocks or per-tenant indexes |
 | **D. A different engine.** A store with tenant-clustered immutable blocks | The complete Salesforce design | The reading notes found no available engine with this function. FoundationDB had a design for per-tenant keys, but its tenant function was experimental, and it is absent from the current main branch |
 
-Partitions of a shared table, one for each tenant, do not help. In `pg_tde`, each partition gets a different internal key, but one principal key wraps all keys of a database. The tenant cannot hold or remove a key of its own.
+**Accepted limits.** The owner of the project accepted three limits of PostgreSQL for a key of a tenant. They apply to each form of option A:
+
+- The write-ahead log, and thus its archive, has one key for the cluster.
+- The planner statistics in the system catalogs hold sample values, and they do not have the key of the tenant.
+- The temporary files of queries do not have the key of the tenant.
+
+With these limits accepted, option A has three forms. All three need a PostgreSQL that the operator runs, and not a managed service.
+
+| Form | Key of the tenant | Shared tables | Limit on the number of tenants |
+|---|---|---|---|
+| **A1. A cluster for each tenant** (the dedicated tier) | The key of the volume or of the managed service | No | Cost of a cluster for each tenant |
+| **A2. A database for each tenant in one cluster,** with `pg_tde` | The principal key of the database, in a key management service | No: the same schema in each database | Thousands (TBR). Each database needs its own connections and its own schema changes |
+| **A3. A partition for each tenant in shared tables.** Each partition is in a tablespace of its own, on a volume with its own key | The key of the volume | Yes: one schema, one database, row-level security as now | Hundreds (TBR). Each table needs a list partition for each tenant |
+
+`pg_tde` cannot do A3 alone. In `pg_tde`, each partition gets a different internal key, but one principal key wraps all keys of a database, and no key belongs to a tablespace. A3 thus needs encryption of the volume below each tablespace. That key is open while the volume is in use.
 
 Option B is good for columns that the database never reads: the payload of an outbox row, the details of an audit record, a long description. Such a row is written one time, so the service encrypts it one time. Option B is poor for names and for attributes that queries filter on.
 
@@ -115,7 +129,7 @@ Option B is good for columns that the database never reads: the payload of an ou
 1. Give each tenant a tenant key in all tiers. Use it for the immutable parts as described above. This is the largest part of the metadata by volume, and all of the data.
 2. In the shared tier, use option B for the columns that the database never reads. State clearly that names, paths and indexed attributes in the shared database have the key of the instance, and not a key of the tenant.
 3. Keep the period short in which a row is in PostgreSQL only and not in a sealed block.
-4. A tenant that needs a key of its own for all of the catalog gets a database of its own (option A). The hosted design already has this tier, and a move between tiers does not change the keys of records.
+4. A tenant that needs a key of its own for the catalog rows gets form A2, a database of its own in a shared cluster. It has a key in a key management service that the tenant can remove, and it needs no volume for each tenant. A move between tiers does not change the keys of records. Form A1 stays for tenants that also need capacity or recovery of their own.
 5. Keep the catalog store behind a narrow interface, so that an engine of kind D can replace PostgreSQL later. Do not select such an engine now.
 
 ## What a tenant key gives, and what it does not
@@ -135,7 +149,7 @@ Option B is good for columns that the database never reads: the payload of an ou
 ## Questions for the owner of the project
 
 1. **What must the key protect against?** Separation at rest, where the service can read, is the Salesforce design. A service that cannot read needs the client mode and the customer gateway, and it costs search and statistics in the control plane.
-2. **Must names and indexed metadata in the shared tier have a key of the tenant?** If yes, PostgreSQL with shared tables is not enough, and the answer decides the database engine.
+2. **Which form of option A for a tenant with a key: A2 or A3?** A2 has a key that the tenant can remove in a key management service. A3 keeps shared tables.
 3. **Is the manifest the correct unit for a data key?** It makes a partition the unit of sharing and of removal by key.
 4. **Does a clone depend on the key of its source?**
 5. **Is option C wanted for its own sake?** A smaller database also helps the move of a tenant, which is then mostly a change of pointers.
