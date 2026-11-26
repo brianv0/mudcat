@@ -4,8 +4,8 @@ Status: definitions only. There is no mudcat implementation yet, and no runner. 
 
 | Layer | File | Content |
 |---|---|---|
-| Invariants | [invariants.yaml](invariants.yaml) | 25 statements that are true after each step of each eval |
-| Task templates | [tasks.yaml](tasks.yaml) | 42 tasks with variation. `generate.py` expands them into 694 variants |
+| Invariants | [invariants.yaml](invariants.yaml) | 26 statements that are true after each step of each eval |
+| Task templates | [tasks.yaml](tasks.yaml) | 44 tasks with variation. `generate.py` expands them into 776 variants |
 | Reference scenarios | [scenarios/](scenarios/) | 40 fixed sequences of actions, which show one possible path through a task |
 | Benchmarks | [benchmarks/](benchmarks/) | Measured evals. The first one is for search: 13 query classes, 17 measures and 21 targets |
 | Conformance suites | [conformance/](conformance/) | Suites from other projects that mudcat must pass. The first one is the Iceberg REST Compatibility Kit |
@@ -68,6 +68,7 @@ These rules make a task effective:
 | T1.6 commit-again-after-a-lost-answer | Send a commit again and get the change one time | state of the first attempt, idempotency key, kind of change | | 8 |
 | T1.7 register-many-files | Register the files of a job, all visible at one time | state of the entries, number of parts, dataset | number of files, structure | 18 |
 | T1.8 two-writers-register | Two writers register at the same time | overlap of the files, expectation | interface | 11 |
+| T1.9 controlled-access | Read data that a rule permits only for some persons and places | attribute of the principal, place of the caller, storage of the replicas, kind of request | | 32 |
 | T2.1 combine-methods | Publish one dataset from two | methods, declared equivalence, step | | 8 |
 | T2.2 leakage-check | Find out if test data is related to training inputs | criterion, number of related elements | | 12 |
 | T2.3 reproduce-later | Get the training inputs again after one year | change since the first resolution | | 7 |
@@ -75,6 +76,7 @@ These rules make a task effective:
 | T3.1 policy-gate | Get data for an action and a purpose | action, purpose, state of the sources, scope | | 40 |
 | T3.2 removal | Remove content at one of five levels | level, legal hold, point of removal, storage | | 60 |
 | T3.3 content-summary | Make the summary of training content | kinds of source, base models, completeness of records | number of sources | 20 |
+| T3.4 control-marks | Marked data and all that is made from it stays inside its boundary | kind of derived entity, receiver, release | | 50 |
 | T4.1 stream-consumer | Keep an outside index equal to the catalog | state of the consumer, rollbacks | number of writers | 9 |
 | T4.2 retrieval-after-change | The next request shows a change at once | kind of change, kind of request | | 18 |
 | T4.3 search-after-a-write | Search for a thing directly after a change to it | kind of change, age of the change, kind of answer | | 24 |
@@ -104,7 +106,7 @@ These rules make a task effective:
 | T8.4 import-and-train | Train on a public dataset together with own data | licence, purpose, reach of the files | format of the description | 17 |
 | T8.5 the-original-changes | Know when a public dataset changed or went away | state of the original, use in the tenant | | 10 |
 
-Variants for each use case: 110, 51, 120, 59, 71, 101, 103 and 79.
+Variants for each use case: 142, 51, 170, 59, 71, 101, 103 and 79.
 
 `generate.py` has these options:
 
@@ -207,7 +209,7 @@ This vocabulary is the first sketch of the operations of mudcat. It is not an in
   - A request for own data and public data together is refused completely when the terms of the public data do not permit it.
   - A person with no access to a discovered dataset does not find it in a search. Goods showed the metadata of each dataset to each engineer.
   - When the content of a public dataset changes with no new version, mudcat keeps the old checksums and makes new versions.
-- The tasks and the invariants cover 134 of the 194 requirements. Requirements for performance and for federation have no task yet.
+- The tasks and the invariants cover 142 of the 204 requirements. Requirements for performance and for federation have no task yet.
 
 ## Not yet done
 

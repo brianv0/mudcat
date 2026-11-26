@@ -97,6 +97,9 @@ The assistant made these decisions while it wrote the documents and the evals. E
 | The options of the Iceberg compatibility kit: server-side retry on, location override on managed storage only, names with a dot off | evals/conformance |
 | The gateway has no views and no commits to more than one table in its first scope | architecture, Conformance |
 | The latency target of 200 ms for search comes from a rule for interactive systems that the assistant gave from memory | search.md |
+| A control mark always propagates, with the most restrictive value, to statistics and embeddings also | model, section 3 |
+| Controlled data is a use case in reserve, with a profile, and not a grounding use case | use-cases.md |
+| The operators of an instance get the same access checks as all other principals | requirements, AC-10 |
 
 ## 3. Known gaps
 

@@ -295,6 +295,15 @@ A **tag** (`mc:Tag`) is an attribute definition that classifies, with a closed l
 - **Propagation.** The owner of a tag can mark it to propagate along `prov:wasDerivedFrom`, as duties do. A derived entity then carries the tag of its inputs. Conflicts are flagged.
 - **Policy.** Custody levels, default duties and access conditions can attach to a tag value, instead of to each attribute or object. Thus classification of an entity applies the policy.
 
+**Control marks.** A control mark is a tag that says that a rule outside mudcat controls an entity, for example a rule for export or for information that a government protects. Its values come from the rule set. A control mark differs from other tags in four ways:
+
+- **It always propagates.** An entity that derives from marked entities gets the most restrictive value of each mark of its inputs. This applies to subsets, caches, embeddings, statistics and models.
+- **It covers the metadata.** The names, the descriptions, the statistics and the search document of a marked entity have the same mark.
+- **Only an authority lowers it.** mudcat lowers or removes a mark only with a recorded decision of a principal who has the role for that mark. The decision has a reason, and the history keeps the old value.
+- **It limits where the entity can go.** mudcat sends a marked entity, or its metadata, only to the receivers that the configuration permits for that mark: storage resources, derived indexes, enrichers, subscribers and other tenants.
+
+[controlled-data.md](controlled-data.md) applies control marks to the rules of the United States.
+
 ### Enrichers
 
 An **enricher** (`mc:Enricher`) is a registered, versioned plugin that computes metadata. Format plugins are one kind of enricher. Others compute classifications, quality metrics, fingerprints, embeddings or AI-generated descriptions. Snowflake has the same kinds of function: automatic classification into system tags, data metric functions on a schedule, and generated descriptions.
@@ -538,6 +547,7 @@ Three rules keep the schema portable and the graph shallow:
 
 - **ACL roots.** mudcat keeps Datacat's rule: a collection without its own ACL inherits from the nearest ancestor that has one. mudcat maintains an `acl_root` relation from every collection to that ancestor. Thus, a check follows one hop, independent of the depth of the folder tree. External services cap the resolution depth, usually at a few dozen hops.
 - **Tickets.** An iRODS-style ticket becomes a relationship whose condition limits it by expiry time or use count.
+- **Attributes of principals.** A principal can have attributes that a condition tests, for example a nationality status, a signed agreement or a completed course. Each attribute records its source and its expiry: the identity provider, an administrator, or a signed record. A compartment can need an attribute in addition to membership. The operators of an instance are principals as all others are.
 - **Compartments.** A compartment is an intersection. A subject needs membership of the compartment's group in addition to the ordinary grant. Compartments implement partner segregation and restricted evaluation sets.
 
 **Correspondence with Datacat.** Of the reviewed systems, Datacat's ACL model is the closest to this one. It maps directly:

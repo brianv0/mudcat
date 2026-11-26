@@ -312,6 +312,54 @@
   verifies: [OP-18, OP-19, IN-17, ID-19, OP-5]
   reference: UC1-02
 
+- id: T1.9
+  use_case: 1
+  name: controlled-access
+  goal: Read data that a rule permits only for some persons, from some places.
+  axes:
+    principal: [has-the-attribute, has-an-expired-attribute, lacks-the-attribute, an-operator-who-lacks-the-attribute]
+    caller: [in-a-permitted-place, in-another-country]
+    replicas: [on-permitted-storage, only-on-other-storage]
+    request: [resolve, search-of-the-metadata]
+  fixture: >
+    A dataset has a control mark. Its compartment needs an attribute of the principal, and its rule
+    permits access from one country only. The principal {principal}. The caller is {caller}. The
+    replicas of the dataset are {replicas}. The request is a {request}.
+  oracle:
+    - if: {principal: [has-an-expired-attribute, lacks-the-attribute, an-operator-who-lacks-the-attribute]}
+      then: {outcome: denied}
+    - if: {caller: in-another-country}
+      then: {outcome: denied-for-the-place}
+    - if: {request: search-of-the-metadata}
+      then: {outcome: found-with-its-mark}
+    - if: {replicas: only-on-other-storage}
+      then: {outcome: no-permitted-replica}
+    - else: {outcome: resolved}
+  checks:
+    - check: The audit log has the decision, with the attributes of the principal and the location of the caller that it used.
+    - outcome: denied
+      check: The answer has no data and no metadata of the dataset. It is the same as the answer for a dataset that does not exist.
+    - outcome: denied
+      when: {principal: has-an-expired-attribute}
+      check: The audit log states that the attribute expired.
+    - outcome: denied
+      when: {principal: an-operator-who-lacks-the-attribute}
+      check: The operator gets the same answer as other principals, also through the tools for operation.
+    - outcome: denied-for-the-place
+      check: mudcat issues no credentials, and the error names the rule for the place.
+    - outcome: denied-for-the-place
+      when: {request: search-of-the-metadata}
+      check: The results do not contain the dataset.
+    - outcome: found-with-its-mark
+      check: The result shows the control mark of the dataset.
+    - outcome: no-permitted-replica
+      check: mudcat issues no credentials for the other storage, and states that no permitted replica exists.
+    - outcome: resolved
+      check: The credentials have a short life and the scope of the dataset.
+  invariants: [INV-6, INV-9, INV-26]
+  verifies: [AC-9, AC-10, AC-11, RD-4, RD-9, EV-11, AC-8]
+  reference: UC1-05
+
 # ---------------------------------------------------------------- use case 2
 
 - id: T2.1
@@ -603,6 +651,52 @@
   invariants: [INV-4]
   verifies: [QY-1, QY-2, UP-1, UP-4]
   reference: UC3-06
+
+- id: T3.4
+  use_case: 3
+  name: control-marks
+  goal: Data with a control mark, and all that is made from it, stays inside its boundary.
+  axes:
+    derived: [a-subset, an-embedding-index, a-trained-model, a-combination-with-open-data, statistics]
+    receiver: [a-store-inside-the-boundary, a-search-index-outside, an-enricher-that-calls-an-outside-service, a-public-description, a-federated-tenant]
+    release: [no-decision, a-recorded-decision-of-the-authority]
+  fixture: >
+    A dataset has a control mark. A job makes {derived} from it. Then a person or a part of mudcat tries
+    to send the derived entity to {receiver}. The configuration permits the mark only for receivers
+    inside the boundary. Release of the derived entity from the mark: {release}.
+  distractors:
+    - A second dataset with no mark is in the same collection, and its derived data goes to each receiver as before.
+  oracle:
+    - if: {release: a-recorded-decision-of-the-authority}
+      then: {outcome: sent-with-no-mark}
+    - if: {receiver: a-store-inside-the-boundary}
+      then: {outcome: sent-with-its-mark}
+    - else: {outcome: not-sent}
+  checks:
+    - check: The dataset keeps its control mark.
+    - outcome: [sent-with-its-mark, not-sent]
+      check: The derived entity has the control mark of the dataset, and its metadata has the same mark.
+    - outcome: [sent-with-its-mark, not-sent]
+      when: {derived: a-combination-with-open-data}
+      check: The combination has the mark, although a part of its inputs has none.
+    - outcome: sent-with-its-mark
+      check: The copy in the store carries the marking.
+    - outcome: not-sent
+      check: The receiver gets no data and no metadata of the derived entity. The audit log has the refusal.
+    - outcome: not-sent
+      when: {receiver: a-public-description}
+      check: mudcat serves no landing page and no description for the entity.
+    - outcome: not-sent
+      when: {receiver: an-enricher-that-calls-an-outside-service}
+      check: The enricher does not run on the entity, and its status record gives the reason.
+    - outcome: sent-with-no-mark
+      check: The history of the derived entity has the decision, with the principal, the role and the reason, and the old value of the mark.
+    - outcome: sent-with-no-mark
+      when: {derived: a-trained-model}
+      check: The decision is for this model only. A second model from the same dataset has the mark.
+  invariants: [INV-9, INV-26]
+  verifies: [UP-18, UP-19, UP-20, OP-23, ST-17, AC-8]
+  reference: UC3-03
 
 # ---------------------------------------------------------------- use case 4
 
