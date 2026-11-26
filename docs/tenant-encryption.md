@@ -101,10 +101,12 @@ The rows in PostgreSQL are the difficult part, for the reason that the paper giv
 
 | Option | What it gives | What it costs |
 |---|---|---|
-| **A. A database for each tenant.** The dedicated tier, or a database of its own in a shared PostgreSQL cluster with an extension for transparent encryption | A key for each tenant for tables and indexes | No shared tables. In the extension that the notes examined, the write-ahead log has one key for the whole cluster. Not practical for a very large number of small tenants |
+| **A. A database for each tenant.** The dedicated tier, or a database of its own in a shared PostgreSQL cluster with the `pg_tde` extension | A key for each tenant for tables and indexes | No shared tables. `pg_tde` needs the PostgreSQL distribution of Percona, and managed PostgreSQL services do not have it. The write-ahead log has one key for the cluster. The planner statistics, which hold sample values, and the temporary files of queries are not encrypted. Not practical for a very large number of small tenants |
 | **B. Encrypted columns.** The service encrypts values with a key of the tenant before it writes a row | A key for each tenant for the values. Shared tables stay | PostgreSQL cannot sort, compare or search the values. Equality needs a blind index, as the customer-encrypted custody level does now |
 | **C. A smaller database.** Seal more kinds of records into tenant blocks: versions, provenance records, metadata payloads, audit records. PostgreSQL keeps pointers, recent rows and indexes | Most of the content gets the block design | Indexes in PostgreSQL still hold names and indexed values in the clear. Queries must read blocks or per-tenant indexes |
 | **D. A different engine.** A store with tenant-clustered immutable blocks | The complete Salesforce design | The reading notes found no available engine with this function. FoundationDB had a design for per-tenant keys, but its tenant function was experimental, and it is absent from the current main branch |
+
+Partitions of a shared table, one for each tenant, do not help. In `pg_tde`, each partition gets a different internal key, but one principal key wraps all keys of a database. The tenant cannot hold or remove a key of its own.
 
 Option B is good for columns that the database never reads: the payload of an outbox row, the details of an audit record, a long description. Such a row is written one time, so the service encrypts it one time. Option B is poor for names and for attributes that queries filter on.
 
